@@ -67,6 +67,7 @@ class TabResNetClassifier:
         self.cfg = cfg
         self.device = device
         self.net = TabResNet(input_dim, cfg).to(device)
+        self.history: dict[str, list[float]] = {}
 
     def fit(self, X_obs_train, m_train, y_train, X_obs_val, m_val, y_val):
         Xtr = torch.tensor(_with_mask(X_obs_train, m_train), dtype=torch.float32)
@@ -83,8 +84,17 @@ class TabResNetClassifier:
         best_state = None
         patience_ctr = 0
 
+        train_losses = []
+        train_accuracies = []
+        val_losses = []
+        val_accuracies = []
+
         for epoch in range(self.cfg.epochs):
             self.net.train()
+            total_train_loss = 0.0
+            total_train_correct = 0
+            total_train_count = 0
+
             for xb, yb in loader:
                 xb, yb = xb.to(self.device), yb.to(self.device)
                 opt.zero_grad()
@@ -93,10 +103,26 @@ class TabResNetClassifier:
                 loss.backward()
                 opt.step()
 
+                bs = yb.size(0)
+                total_train_loss += loss.item() * bs
+                preds = (logits >= 0.0).float()
+                total_train_correct += (preds == yb).sum().item()
+                total_train_count += bs
+
+            ep_train_loss = total_train_loss / max(1, total_train_count)
+            ep_train_acc = total_train_correct / max(1, total_train_count)
+
             self.net.eval()
             with torch.no_grad():
                 val_logits = self.net(Xva)
                 val_loss = criterion(val_logits, yva).item()
+                val_preds = (val_logits >= 0.0).float()
+                val_acc = (val_preds == yva).float().mean().item()
+
+            train_losses.append(ep_train_loss)
+            train_accuracies.append(ep_train_acc)
+            val_losses.append(val_loss)
+            val_accuracies.append(val_acc)
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -109,6 +135,13 @@ class TabResNetClassifier:
 
         if best_state is not None:
             self.net.load_state_dict(best_state)
+
+        self.history = {
+            "loss": train_losses,
+            "val_loss": val_losses,
+            "accuracy": train_accuracies,
+            "val_accuracy": val_accuracies,
+        }
         return self
 
     @torch.no_grad()

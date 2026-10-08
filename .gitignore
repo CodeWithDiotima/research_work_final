@@ -13,6 +13,10 @@ __pycache__/
 
 # Large data/output files
 workspace.json
+workspacememory.md
+
+# Auto-generated tool artifacts
+graphify-out/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -30,3 +34,11 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Evaluation outputs (generated at runtime)
+evaluation_plots/
+
+# Saved model checkpoints (generated at runtime)
+models/*.json
+models/*.ubj
+models/*.pt

@@ -311,3 +311,13 @@ if __name__ == "__main__":
     print("X_train:", prepared.X_train.shape, "y_train balance:",
           np.bincount(prepared.y_train))
     print("mask example:", prepared.m_train[0])
+    final_dataset= prepare_dataset()
+    # print("X_train",final_dataset.X_train.shape)
+    # print("y_train",final_dataset.y_train.shape)
+    # print("m_train",final_dataset.m_train[0][0])
+    # print("X_val",final_dataset.X_val.shape)
+    # print("X_val",final_dataset.y_val.shape)
+    # print("m_val",final_dataset.m_val.shape)
+    # print("X_test",final_dataset.X_test.shape)
+    # print("y_test",final_dataset.y_test.shape)
+    # print("m_test",final_dataset.m_test.shape)
