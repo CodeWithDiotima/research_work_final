@@ -35,39 +35,26 @@ from pipeline import train_full_system
 from fusion import fuse, predict_label
 
 
-def evaluate_fused_test_accuracy(system, prepared) -> float:
+def evaluate_test_accuracy(system, prepared) -> float:
     """
-    Evaluates the accuracy of the combined (fused) ensemble model on the held-out test set.
+    Evaluates the accuracy of the primary CatBoost diagnostic classifier on the held-out test set.
     
     Parameters:
-        system: TrainedSystem container containing trained models and fusion weights.
+        system: TrainedSystem container containing trained CatBoost model.
         prepared: PreparedData container holding test features, masks, and ground-truth labels.
         
     Returns:
-        float: Accuracy score between 0.0 and 1.0 (e.g., 0.85 = 85% correct).
+        float: Accuracy score between 0.0 and 1.0.
     """
-    # Simulate partial observability: element-wise multiply test features by the observation mask
-    # Features where m == 0 are zeroed out (treated as missing/unobserved)
     X_obs_test = prepared.X_test * prepared.m_test
-
-    # Step 4: Predict diabetes risk probability P(y=1) using the trained XGBoost model
-    p_xgb = system.xgb.predict_proba_y1(X_obs_test, prepared.m_test)
-    # print(prepared.m_test)
-    # Step 5: Predict diabetes risk probability P(y=1) using the trained TabResNet neural network
-    p_tr = system.tabresnet.predict_proba_y1(X_obs_test, prepared.m_test)
-
-    # Step 6: Fuse the two probability predictions using optimal validation-learned weights
-    # Formula: p_t = (w_XGB * p_XGB) + (w_TR * p_TR)
-    p_t = fuse(p_xgb, p_tr, system.fusion_weights)
-
-    # Convert continuous probabilities into discrete binary class predictions (0 or 1)
-    # y_hat = 1 if p_t >= 0.5, else 0
+    # Predict diabetes risk probability P(y=1) using the trained CatBoost model
+    p_t = system.catboost.predict_proba_y1(X_obs_test, prepared.m_test)
     y_hat = predict_label(p_t)
-
-    # Compare predictions against actual ground-truth labels (prepared.y_test)
-    # (y_hat == prepared.y_test) creates a boolean array of True/False
-    # .mean() computes the fraction of True predictions (accuracy)
     return float((y_hat == prepared.y_test).mean())
+
+
+# Backward-compatible alias
+evaluate_fused_test_accuracy = evaluate_test_accuracy
 
 
 def main():
@@ -104,27 +91,20 @@ def main():
     # -----------------------------------------------------------------------
     # Step 2: System Training
     # -----------------------------------------------------------------------
-    print("[2/3] Training f_XGB, f_TR, CVAE, fitting fusion weights, building graph...")
-    # Fits XGBoost, TabResNet, CVAE, calculates optimal fusion weights, and builds clinical graph
+    print("[2/3] Training CatBoost classifier (f_CB), CVAE, building graph...")
     system = train_full_system(prepared)
-    
-    # Display the learned ensemble weights showing relative contribution of each model
-    print(f"  fusion weights: w_XGB={system.fusion_weights.w_xgb:.3f} "
-          f"w_TR={system.fusion_weights.w_tr:.3f}")
           
     from extra_plots import plot_training_history
 
-    # 2-panel figure: Loss (left) + Accuracy (right)
-    plot_training_history(system.tabresnet.history, model_name="TabResNet")
-    plot_training_history(system.xgb.history, model_name="XGBoost")
+    # 2-panel figure: Loss (left) + Accuracy (right) for CatBoost
+    plot_training_history(system.catboost.history, model_name="CatBoost")
 
     # -----------------------------------------------------------------------
     # Step 3: Evaluation on Unseen Test Patients
     # -----------------------------------------------------------------------
-    print("[3/3] Evaluating fused classifier on the held-out test set...")
-    # Compute accuracy of the fused system under partially observed test data
-    acc = evaluate_fused_test_accuracy(system, prepared)
-    print(f"  fused test accuracy: {acc:.4f}")
+    print("[3/3] Evaluating CatBoost classifier on the held-out test set...")
+    acc = evaluate_test_accuracy(system, prepared)
+    print(f"  CatBoost test accuracy: {acc:.4f}")
 
     # Return trained system bundle and preprocessed data objects
     return system, prepared
