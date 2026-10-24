@@ -87,6 +87,7 @@ from pipeline import (
     run_adaptive_acquisition,
     train_full_system,
 )
+from models.lightgbm_model import LightGBMClassifierWrapper
 from models.catboost_model import CatBoostClassifier
 from models.cvae import CVAETrainer
 
@@ -348,8 +349,9 @@ def compute_stability_metrics(
     batch = X_obs.shape[0]
 
     # Predict observed state
-    p_t = system.catboost.predict_proba_y1(X_obs, m)
-    y_hat_t = predict_label(p_t)
+    p_t = system.lightgbm.predict_proba_y1(X_obs, m)
+    th = getattr(system.lightgbm, "best_threshold_", 0.5)
+    y_hat_t = predict_label(p_t, threshold=th)
 
     # Sample M plausible profiles via CVAE
     plausible = system.cvae.generate_plausible_profiles(X_obs, m, n_samples=n_samples_M)
@@ -361,8 +363,8 @@ def compute_stability_metrics(
 
     for i in range(M):
         profile = plausible[i]
-        p_plaus[i] = system.catboost.predict_proba_y1(profile, full_mask)
-        y_plaus[i] = predict_label(p_plaus[i])
+        p_plaus[i] = system.lightgbm.predict_proba_y1(profile, full_mask)
+        y_plaus[i] = predict_label(p_plaus[i], threshold=th)
 
     # Steps 12-14: Class stability, probability stability, and DSS
     cs_t, pd_t_norm, dss_t = evaluate_stability_and_dss(
@@ -423,8 +425,9 @@ def evaluate_robustness_missingness(
         X_obs = apply_mask(X_sub, m)
 
         # Baseline masked prediction
-        p_init = system.catboost.predict_proba_y1(X_obs, m)
-        y_init = predict_label(p_init)
+        p_init = system.lightgbm.predict_proba_y1(X_obs, m)
+        th = getattr(system.lightgbm, "best_threshold_", 0.5)
+        y_init = predict_label(p_init, threshold=th)
         
         # Stability and initial DSS
         stab_init = compute_stability_metrics(system, X_obs, m, n_samples_M=cfg.cvae.n_samples_M)
@@ -626,7 +629,8 @@ def save_trained_system(system: TrainedSystem, path: str = DEFAULT_CHECKPOINT_PA
     """Serializes the TrainedSystem bundle to disk for instant subsequent evaluation."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     payload = {
-        "catboost": system.catboost,
+        "lightgbm": system.lightgbm,
+        "catboost": system.catboost,  # backward compatibility alias
         "cvae_state": system.cvae.model.state_dict(),
         "cvae_cfg": system.cvae.cfg,
         "cvae_dim": system.cvae.model.feature_dim,
@@ -650,12 +654,14 @@ def load_trained_system(path: str = DEFAULT_CHECKPOINT_PATH) -> Optional[Trained
         cvae = CVAETrainer(payload["cvae_dim"], payload["cvae_cfg"])
         cvae.model.load_state_dict(payload["cvae_state"])
 
-        catboost = payload.get("catboost")
-        if catboost is None and "xgb" in payload:
-            catboost = payload["xgb"]
+        lightgbm = payload.get("lightgbm")
+        if lightgbm is None and "catboost" in payload:
+            lightgbm = payload["catboost"]
+        elif lightgbm is None and "xgb" in payload:
+            lightgbm = payload["xgb"]
 
         system = TrainedSystem(
-            catboost=catboost,
+            lightgbm=lightgbm,
             cvae=cvae,
             graph=payload["graph"],
             feature_names=payload["feature_names"],
@@ -885,6 +891,7 @@ def run_full_metrics_evaluation(
     eval_cfg = copy.deepcopy(CFG)
     if quick:
         print("Running in fast-eval mode (optimized iterations)...")
+        eval_cfg.lightgbm.n_estimators = 50
         eval_cfg.catboost.iterations = 50
         eval_cfg.cvae.epochs = 10
         eval_cfg.cvae.n_samples_M = 15
@@ -899,7 +906,7 @@ def run_full_metrics_evaluation(
         system = load_trained_system(checkpoint_path)
 
     if system is None:
-        print("[Step 2/6] Training full DSS system bundle (CatBoost, CVAE, Graph)...")
+        print("[Step 2/6] Training full DSS system bundle (LightGBM, CVAE, Graph)...")
         system = train_full_system(prepared, cfg=eval_cfg)
         save_trained_system(system, checkpoint_path)
     else:
@@ -916,8 +923,9 @@ def run_full_metrics_evaluation(
     # Step 3: Initial Partially Observed Prediction & Stability
     # -----------------------------------------------------------------------
     print(f"\n[Step 3/6] Evaluating Initial (Partially Observed) state for {n} patients...")
-    p_fused_0 = system.catboost.predict_proba_y1(X_obs_init, m_test_eval)
-    y_hat_0 = predict_label(p_fused_0)
+    p_fused_0 = system.lightgbm.predict_proba_y1(X_obs_init, m_test_eval)
+    th = getattr(system.lightgbm, "best_threshold_", 0.5)
+    y_hat_0 = predict_label(p_fused_0, threshold=th)
 
     pred_initial = compute_prediction_metrics(y_test_eval, y_hat_0, p_fused_0)
     stability_initial = compute_stability_metrics(

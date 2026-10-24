@@ -41,8 +41,8 @@ def _ensure_out_dir():
 def plot_confusion_heatmap(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    title: str = "CatBoost",
-    filename: str = "confusion_matrix_catboost.png",
+    title: str = "LightGBM",
+    filename: str = "confusion_matrix_lightgbm.png",
     class_names=("No Diabetes", "Diabetes"),
 ):
     """Heatmap with the raw count and the row-normalised percentage in each cell."""
@@ -101,7 +101,7 @@ def plot_confusion_heatmap(
 # ---------------------------------------------------------------------------
 # Training curves
 # ---------------------------------------------------------------------------
-def plot_training_history(history: dict, model_name: str = "CatBoost", filename: str | None = None):
+def plot_training_history(history: dict, model_name: str = "LightGBM", filename: str | None = None):
     """Left: loss vs round (train & val). Right: accuracy vs round (train & val)."""
     _ensure_out_dir()
     filename = filename or f"training_history_{model_name.lower()}.png"
@@ -110,7 +110,7 @@ def plot_training_history(history: dict, model_name: str = "CatBoost", filename:
     alias = {"loss": "train_loss", "accuracy": "train_acc", "val_accuracy": "val_acc"}
     history = {alias.get(k, k): v for k, v in history.items()}
 
-    unit = "Boosting round" if "catboost" in model_name.lower() or "xgb" in model_name.lower() else "Epoch"
+    unit = "Boosting round" if any(k in model_name.lower() for k in ["lightgbm", "catboost", "xgb"]) else "Epoch"
 
     fig, (ax_loss, ax_acc) = plt.subplots(1, 2, figsize=(11, 4.5))
 
@@ -146,6 +146,24 @@ def plot_training_history(history: dict, model_name: str = "CatBoost", filename:
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Saved: {path}")
+
+
+def history_from_lightgbm(evals_result: dict) -> dict:
+    """
+    Convert LightGBM evals_result dictionary into a standard history dict.
+    """
+    learn = evals_result.get("learn", {})
+    val = evals_result.get("val", {})
+    loss = learn.get("binary_logloss", [])
+    val_loss = val.get("binary_logloss", [])
+    learn_err = learn.get("binary_error", [])
+    val_err = val.get("binary_error", [])
+    return {
+        "train_loss": [float(v) for v in loss],
+        "val_loss": [float(v) for v in val_loss],
+        "train_acc": [1.0 - float(e) for e in learn_err] if learn_err else [],
+        "val_acc": [1.0 - float(e) for e in val_err] if val_err else [],
+    }
 
 
 def history_from_catboost(evals_result: dict, loss_metric: str = "Logloss") -> dict:

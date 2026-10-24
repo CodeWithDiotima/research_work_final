@@ -37,19 +37,20 @@ from fusion import fuse, predict_label
 
 def evaluate_test_accuracy(system, prepared) -> float:
     """
-    Evaluates the accuracy of the primary CatBoost diagnostic classifier on the held-out test set.
+    Evaluates the accuracy of the primary LightGBM diagnostic classifier on the held-out test set.
     
     Parameters:
-        system: TrainedSystem container containing trained CatBoost model.
+        system: TrainedSystem container containing trained LightGBM model.
         prepared: PreparedData container holding test features, masks, and ground-truth labels.
         
     Returns:
         float: Accuracy score between 0.0 and 1.0.
     """
     X_obs_test = prepared.X_test * prepared.m_test
-    # Predict diabetes risk probability P(y=1) using the trained CatBoost model
-    p_t = system.catboost.predict_proba_y1(X_obs_test, prepared.m_test)
-    y_hat = predict_label(p_t)
+    # Predict diabetes risk probability P(y=1) using the trained LightGBM model
+    p_t = system.lightgbm.predict_proba_y1(X_obs_test, prepared.m_test)
+    th = getattr(system.lightgbm, "best_threshold_", 0.5)
+    y_hat = predict_label(p_t, threshold=th)
     return float((y_hat == prepared.y_test).mean())
 
 
@@ -76,35 +77,34 @@ def main():
     # -----------------------------------------------------------------------
     # Step 1: Data Preparation & Preprocessing
     # -----------------------------------------------------------------------
-    print("[1/3] Preparing dataset (undersample -> exact balance -> 70/15/15 split)...")
-    # Loads dataset, performs exact 50/50 majority undersampling, splits 70/15/15,
-    # standardizes continuous columns, and samples initial observation masks
+    print("[1/3] Preparing dataset (stratified 70/15/15 split)...")
     prepared = prepare_dataset(path=args.data)
     
     # Print the shape/dimensions of each split (number of patients, number of features)
     print(f"  train={prepared.X_train.shape}  val={prepared.X_val.shape}  "
           f"test={prepared.X_test.shape}")
     
-    # Print the exact count of 0s (no diabetes) and 1s (diabetes) to verify exact balance
+    # Print the exact count of 0s (no diabetes) and 1s (diabetes)
     print(f"  train class balance: {np.bincount(prepared.y_train)}")
 
     # -----------------------------------------------------------------------
     # Step 2: System Training
     # -----------------------------------------------------------------------
-    print("[2/3] Training CatBoost classifier (f_CB), CVAE, building graph...")
+    print("[2/3] Training LightGBM classifier (f_LGBM), CVAE, building graph...")
     system = train_full_system(prepared)
           
     from extra_plots import plot_training_history
 
-    # 2-panel figure: Loss (left) + Accuracy (right) for CatBoost
-    plot_training_history(system.catboost.history, model_name="CatBoost")
+    # 2-panel figure: Loss (left) + Accuracy (right) for LightGBM
+    plot_training_history(system.lightgbm.history, model_name="LightGBM")
 
     # -----------------------------------------------------------------------
     # Step 3: Evaluation on Unseen Test Patients
     # -----------------------------------------------------------------------
-    print("[3/3] Evaluating CatBoost classifier on the held-out test set...")
+    print("[3/3] Evaluating LightGBM classifier on the held-out test set...")
     acc = evaluate_test_accuracy(system, prepared)
-    print(f"  CatBoost test accuracy: {acc:.4f}")
+    th = getattr(system.lightgbm, "best_threshold_", 0.5)
+    print(f"  LightGBM test accuracy (threshold={th:.2f}): {acc:.4f}")
 
     # Return trained system bundle and preprocessed data objects
     return system, prepared

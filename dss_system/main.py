@@ -3,9 +3,10 @@ main.py
 =======
 Demonstrates the complete end-to-end clinical workflow:
 1. Dataset Preparation: Loads CDC Diabetes dataset with stratified 70/15/15 split.
-2. System Training: Trains CatBoost (f_CB), CVAE, and builds the Clinical Information Graph.
+2. System Training: Trains LightGBM (f_LGBM), CVAE, and builds the Clinical Information Graph.
 3. Evaluation Checkpoints:
-   - Checkpoint 1: Evaluates CatBoost classification accuracy under partial observation masks.
+   - Checkpoint 1: Evaluates LightGBM classification accuracy under partial observation masks.
+   - Checkpoint 1b: Evaluates Experiment A (Full features) vs Experiment B (Masked features).
    - Checkpoint 2: Generates confusion matrices, ROC/PR curves, and performance plots.
    - Checkpoint 3: Tests decision stability under CVAE generative completions.
 4. Adaptive Acquisition Simulation:
@@ -29,7 +30,13 @@ from config import CFG, FEATURE_COLUMNS
 from data_processing import prepare_dataset, sample_observation_masks, apply_mask
 from pipeline import train_full_system, run_adaptive_acquisition
 from train import evaluate_test_accuracy
-from evaluate import evaluate_system, evaluate_plausible_stability, evaluate_masked_accuracy, plot_training_curves
+from evaluate import (
+    evaluate_system,
+    evaluate_plausible_stability,
+    evaluate_masked_accuracy,
+    evaluate_experiments_a_and_b,
+    plot_training_curves,
+)
 
 
 def main(data_path: str = None, n_demo_patients: int = 20):
@@ -54,19 +61,26 @@ def main(data_path: str = None, n_demo_patients: int = 20):
     system = train_full_system(prepared)
     print("System training complete.\n")
 
-    # Plot CatBoost training history (loss and accuracy curves)
-    if hasattr(system.catboost, "history") and system.catboost.history:
-        plot_training_curves(system.catboost.history, title_prefix="CatBoost")
+    # Plot LightGBM training history (loss and accuracy curves)
+    if hasattr(system.lightgbm, "history") and system.lightgbm.history:
+        plot_training_curves(system.lightgbm.history, title_prefix="LightGBM")
 
     # Calculate baseline static accuracy on the test set using initially available features
     acc = evaluate_test_accuracy(system, prepared)
-    print(f"CatBoost static test accuracy (masked): {acc:.4f}\n")
+    th = getattr(system.lightgbm, "best_threshold_", 0.5)
+    print(f"LightGBM static test accuracy (masked, threshold={th:.2f}): {acc:.4f}\n")
 
     # -----------------------------------------------------------------------
     # Checkpoint 1: Masked Accuracy Analysis
     # -----------------------------------------------------------------------
     print("Checkpoint 1: Evaluating masked accuracy across splits...")
     evaluate_masked_accuracy(system, prepared)
+
+    # -----------------------------------------------------------------------
+    # Checkpoint 1b: Formal Experiments A and B (Full Features vs Masked Features)
+    # -----------------------------------------------------------------------
+    print("\nCheckpoint 1b: Evaluating Experiment A (Full) vs Experiment B (Masked)...")
+    evaluate_experiments_a_and_b(system, prepared)
 
     # -----------------------------------------------------------------------
     # Checkpoint 2: Detailed Performance Metrics & Visualizations
