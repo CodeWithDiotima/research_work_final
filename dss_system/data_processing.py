@@ -305,7 +305,7 @@ def prepare_dataset(path: Optional[str] = None,
     _split_diag("Val", splits.val)
     _split_diag("Test", splits.test)
     print("  - Training-only resampling: None (keeping all training records; "
-          "class imbalance handled via CatBoost auto_class_weights='Balanced')")
+          "class imbalance handled via LightGBM class_weight='balanced')")
 
     # Fit preprocessor on Train ONLY; transform all splits
     pre = Preprocessor().fit(splits.train)

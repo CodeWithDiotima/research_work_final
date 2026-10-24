@@ -74,7 +74,7 @@ class SplitConfig:
     # 15% of data held-out for final model evaluation & adaptive testing
     test_frac: float = 0.15
     random_state: int = 42
-    # Stratified split on natural prevalence by default; class balance handled by CatBoost auto_class_weights
+    # Stratified split on natural prevalence by default; class balance handled by LightGBM class_weight="balanced"
     exact_balance: bool = False
 
 
@@ -122,7 +122,51 @@ class CVAEConfig:
 
 
 # ===========================================================================
-# 5. CATBOOST CLASSIFIER CONFIGURATION (f_CB - Primary Diagnostic Classifier)
+# 5. LIGHTGBM CLASSIFIER CONFIGURATION (f_LGBM - Primary Diagnostic Classifier)
+# ===========================================================================
+@dataclass
+class LightGBMConfig:
+    """
+    Hyperparameters for the LightGBM gradient boosted decision trees classifier.
+    Serves as the single primary diagnostic classifier predicting diabetes probability
+    p_t = p_lightgbm given observed features and observation mask.
+    """
+    # Maximum number of boosting trees / iterations to build
+    n_estimators: int = 500
+    # Learning rate (shrinkage factor) applied to each tree's contribution
+    learning_rate: float = 0.05
+    # Maximum number of leaves in one tree (controls tree complexity)
+    num_leaves: int = 31
+    # Maximum tree depth (-1 means unconstrained depth)
+    max_depth: int = -1
+    # Minimum number of data samples required in a leaf
+    min_child_samples: int = 20
+    # Subsample ratio of the training instances (row subsampling)
+    subsample: float = 0.8
+    # Subsample frequency (1 means enable subsampling every iteration)
+    subsample_freq: int = 1
+    # Subsample ratio of columns when constructing each tree (column subsampling)
+    colsample_bytree: float = 0.8
+    # L1 regularization term on weights
+    reg_alpha: float = 0.0
+    # L2 regularization term on weights
+    reg_lambda: float = 1.0
+    # Stops training early if validation loss does not improve for 30 consecutive rounds
+    early_stopping_rounds: int = 30
+    # Random seed for reproducible tree construction
+    random_state: int = 42
+    # Number of CPU threads used (-1 uses all available threads)
+    n_jobs: int = -1
+    # Automatically compute class weights to handle natural CDC class imbalance (~13.9% positive)
+    class_weight: str = "balanced"
+    # Controls verbosity of LightGBM (-1 = silent / errors only)
+    verbosity: int = -1
+    # Evaluation metric used to monitor validation performance
+    eval_metric: str = "binary_logloss"
+
+
+# ===========================================================================
+# 5b. CATBOOST CLASSIFIER CONFIGURATION (Reference)
 # ===========================================================================
 @dataclass
 class CatBoostConfig:
@@ -294,7 +338,9 @@ class PipelineConfig:
     mask: MaskConfig = field(default_factory=MaskConfig)
     # Generative CVAE model configuration
     cvae: CVAEConfig = field(default_factory=CVAEConfig)
-    # Primary diagnostic classifier configuration (CatBoost f_CB)
+    # Primary diagnostic classifier configuration (LightGBM f_LGBM)
+    lightgbm: LightGBMConfig = field(default_factory=LightGBMConfig)
+    # CatBoost classifier configuration (reference)
     catboost: CatBoostConfig = field(default_factory=CatBoostConfig)
     # XGBoost classifier configuration (legacy / reference)
     xgb: XGBConfig = field(default_factory=XGBConfig)
