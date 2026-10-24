@@ -52,7 +52,7 @@ def evaluate_fused_test_accuracy(system, prepared) -> float:
 
     # Step 4: Predict diabetes risk probability P(y=1) using the trained XGBoost model
     p_xgb = system.xgb.predict_proba_y1(X_obs_test, prepared.m_test)
-    print(prepared.m_test)
+    # print(prepared.m_test)
     # Step 5: Predict diabetes risk probability P(y=1) using the trained TabResNet neural network
     p_tr = system.tabresnet.predict_proba_y1(X_obs_test, prepared.m_test)
 
@@ -111,6 +111,12 @@ def main():
     # Display the learned ensemble weights showing relative contribution of each model
     print(f"  fusion weights: w_XGB={system.fusion_weights.w_xgb:.3f} "
           f"w_TR={system.fusion_weights.w_tr:.3f}")
+          
+    from extra_plots import plot_training_history
+
+    # 2-panel figure: Loss (left) + Accuracy (right)
+    plot_training_history(system.tabresnet.history, model_name="TabResNet")
+    plot_training_history(system.xgb.history, model_name="XGBoost")
 
     # -----------------------------------------------------------------------
     # Step 3: Evaluation on Unseen Test Patients

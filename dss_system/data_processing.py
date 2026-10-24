@@ -110,18 +110,46 @@ def load_raw_dataframe(path: Optional[str] = None) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Exact-balance undersampling (performed BEFORE the 70/15/15 split)
 # ---------------------------------------------------------------------------
-def undersample_exact_balance(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
+# def undersample_exact_balance(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
+#     """
+#     Randomly undersample the majority class so that the positive and
+#     negative class counts are EXACTLY equal.
+#     """
+#     pos = df[df[TARGET_COLUMN] == 1]
+#     neg = df[df[TARGET_COLUMN] == 0]
+#     n = min(len(pos), len(neg))
+#     pos_bal = pos.sample(n=n, random_state=random_state)
+#     neg_bal = neg.sample(n=n, random_state=random_state)
+#     balanced = pd.concat([pos_bal, neg_bal], axis=0)
+#     balanced = balanced.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
+#     assert (balanced[TARGET_COLUMN] == 1).sum() == (balanced[TARGET_COLUMN] == 0).sum()
+#     return balanced
+
+
+def undersample_exact_balance(df: pd.DataFrame, random_state: int = 42,
+                               fraction: float = 0.5) -> pd.DataFrame:
     """
-    Randomly undersample the majority class so that the positive and
-    negative class counts are EXACTLY equal.
+    Undersample so positive and negative counts are EXACTLY equal, then
+    keep only `fraction` of that balanced set (default 0.5 = half),
+    taking the same number of rows from each class so the 50/50
+    balance is preserved.
+
+    Example: 35,346 diabetic + 218,334 non-diabetic
+      -> balanced:  35,346 + 35,346 = 70,692 rows
+      -> fraction=0.5: 17,673 + 17,673 = 35,346 rows
     """
     pos = df[df[TARGET_COLUMN] == 1]
     neg = df[df[TARGET_COLUMN] == 0]
-    n = min(len(pos), len(neg))
-    pos_bal = pos.sample(n=n, random_state=random_state)
-    neg_bal = neg.sample(n=n, random_state=random_state)
+
+    n_full = min(len(pos), len(neg))          # exact-balance size per class
+    n_keep = int(n_full * fraction)           # rows kept per class
+
+    pos_bal = pos.sample(n=n_keep, random_state=random_state)
+    neg_bal = neg.sample(n=n_keep, random_state=random_state)
+
     balanced = pd.concat([pos_bal, neg_bal], axis=0)
     balanced = balanced.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
+
     assert (balanced[TARGET_COLUMN] == 1).sum() == (balanced[TARGET_COLUMN] == 0).sum()
     return balanced
 
@@ -271,6 +299,7 @@ def prepare_dataset(path: Optional[str] = None,
         df = load_raw_dataframe(path)
 
     balanced = undersample_exact_balance(df, random_state=CFG.split.random_state)
+    print("dataframe_2:",balanced)
     splits = train_val_test_split(balanced, cfg=CFG.split)
 
     pre = Preprocessor().fit(splits.train)
@@ -291,20 +320,31 @@ def prepare_dataset(path: Optional[str] = None,
         X_train=X_train, y_train=y_train,
         X_val=X_val, y_val=y_val,
         X_test=X_test, y_test=y_test,
-        m_train=m_train, m_val=m_val, m_test=m_test,
-    )
+        m_train=m_train, m_val=m_val, m_test=m_test)
 
 
 if __name__ == "__main__":
-    # Smoke test with synthetic data matching the schema, since the real
-    # dataset is not wired in yet.
+    # Smoke test with synthetic data matching the schema to test the pipeline offline.
+    # 1. Initialize a seeded random number generator for reproducible synthetic data
     rng = np.random.default_rng(0)
+
+    # 2. Number of synthetic patient records to generate for the smoke test
     n = 2000
+
+    # 3. Create initial DataFrame with unique sequential patient IDs (0 to n-1)
     synth = pd.DataFrame({ID_COLUMN: np.arange(n)})
+
+    # 4. Populate continuous features (e.g., BMI, MentHlth, PhysHlth)
+    #    Sampled from a normal/Gaussian distribution (mean=25, std=5)
     for j in CONTINUOUS_FEATURES:
         synth[j] = rng.normal(25, 5, size=n)
+
+    # 5. Populate categorical features (e.g., HighBP, Smoker, GenHlth, etc.)
+    #    Sampled as discrete integers in the range [0, 4]
     for j in CATEGORICAL_FEATURES:
         synth[j] = rng.integers(0, 5, size=n)
+
+    # 6. Populate the binary target column (Diabetes_binary: 0 for negative, 1 for positive)
     synth[TARGET_COLUMN] = rng.integers(0, 2, size=n)
 
     prepared = prepare_dataset(df=synth)
@@ -312,12 +352,14 @@ if __name__ == "__main__":
           np.bincount(prepared.y_train))
     print("mask example:", prepared.m_train[0])
     final_dataset= prepare_dataset()
-    # print("X_train",final_dataset.X_train.shape)
-    # print("y_train",final_dataset.y_train.shape)
-    # print("m_train",final_dataset.m_train[0][0])
-    # print("X_val",final_dataset.X_val.shape)
-    # print("X_val",final_dataset.y_val.shape)
-    # print("m_val",final_dataset.m_val.shape)
-    # print("X_test",final_dataset.X_test.shape)
-    # print("y_test",final_dataset.y_test.shape)
-    # print("m_test",final_dataset.m_test.shape)
+
+    print("X_train_1",final_dataset.X_train.shape)
+    print("y_train",np.bincount(final_dataset.y_train))
+    # # print("m_train",final_dataset.m_train[0][0])
+    # # print("X_val",final_dataset.X_val.shape)
+    # # print("X_val",final_dataset.y_val.shape)
+    # # print("m_val",final_dataset.m_val.shape)
+    # # print("X_test",final_dataset.X_test.shape)
+    # # print("y_test",final_dataset.y_test.shape)
+    # # print("m_test",final_dataset.m_test.shape)
+ 

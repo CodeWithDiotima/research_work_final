@@ -192,9 +192,10 @@ def acquisition_scores(
         Conn_j = conn[j]
         C_j = costs[j]
         DSG_j = dsg[j]
+        dsg_term = np.where(np.isneginf(DSG_j), -np.inf, cfg.lambda_3 * np.where(np.isneginf(DSG_j), 0.0, DSG_j))
         scores[j] = (cfg.lambda_1 * R_j
                      + cfg.lambda_2 * Conn_j
-                     + cfg.lambda_3 * DSG_j
+                     + dsg_term
                      - cfg.lambda_4 * C_j)
     return scores
 

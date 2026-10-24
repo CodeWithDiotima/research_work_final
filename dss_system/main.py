@@ -195,9 +195,9 @@ def main(data_path: str = None, n_demo_patients: int = 20):
     # Print underlying XGBoost model representation
     print(system.xgb)
 
-    # Train-vs-validation loss/accuracy curves for both models (same history shape)
-    plot_training_curves(system.xgb.history, title_prefix="XGBoost")
-    plot_training_curves(system.tabresnet.history, title_prefix="TabResNet")
+    # # Train-vs-validation loss/accuracy curves for both models (same history shape)
+    # plot_training_curves(system.xgb.history, title_prefix="XGBoost")
+    # plot_training_curves(system.tabresnet.history, title_prefix="TabResNet")
     
     # Calculate baseline static accuracy on the test set using initially available features
     acc = evaluate_fused_test_accuracy(system, prepared)
