@@ -73,10 +73,9 @@ class SplitConfig:
     val_frac: float = 0.15
     # 15% of data held-out for final model evaluation & adaptive testing
     test_frac: float = 0.15
-    # Random seed to ensure reproducible splits across runs
     random_state: int = 42
-    # If True, undersamples the majority class so positive & negative classes are exactly 50/50 balanced
-    exact_balance: bool = True
+    # Stratified split on natural prevalence by default; class balance handled by CatBoost auto_class_weights
+    exact_balance: bool = False
 
 
 # ===========================================================================
@@ -123,7 +122,43 @@ class CVAEConfig:
 
 
 # ===========================================================================
-# 5. XGBOOST CLASSIFIER CONFIGURATION (f_XGB)
+# 5. CATBOOST CLASSIFIER CONFIGURATION (f_CB - Primary Diagnostic Classifier)
+# ===========================================================================
+@dataclass
+class CatBoostConfig:
+    """
+    Hyperparameters for the CatBoost gradient boosted decision trees classifier.
+    Serves as the single primary diagnostic classifier predicting diabetes probability
+    p_t = p_catboost given observed features and observation mask.
+    """
+    # Maximum number of boosting trees / iterations to build
+    iterations: int = 500
+    # Learning rate (shrinkage factor) applied to each tree's contribution
+    learning_rate: float = 0.05
+    # Maximum depth of each decision tree
+    depth: int = 6
+    # L2 regularization term on leaf weights to prevent overfitting
+    l2_leaf_reg: float = 3.0
+    # Stops training early if validation loss does not improve for 30 consecutive rounds
+    early_stopping_rounds: int = 30
+    # Random seed for reproducible tree construction
+    random_seed: int = 42
+    # Number of CPU threads used (-1 uses all available threads)
+    thread_count: int = -1
+    # Automatically compute class weights to handle natural CDC class imbalance (~13.9% positive)
+    auto_class_weights: str = "Balanced"
+    # Loss metric used for optimization
+    loss_function: str = "Logloss"
+    # Evaluation metric used to monitor validation performance
+    eval_metric: str = "Logloss"
+    # How numerical NaNs are treated by the split search ('Min' puts NaNs in the smallest bucket)
+    nan_mode: str = "Min"
+    # Logging verbosity
+    verbose: bool = False
+
+
+# ===========================================================================
+# 5b. XGBOOST CLASSIFIER CONFIGURATION (Legacy / Reference)
 # ===========================================================================
 @dataclass
 class XGBConfig:
@@ -259,7 +294,9 @@ class PipelineConfig:
     mask: MaskConfig = field(default_factory=MaskConfig)
     # Generative CVAE model configuration
     cvae: CVAEConfig = field(default_factory=CVAEConfig)
-    # XGBoost classifier configuration
+    # Primary diagnostic classifier configuration (CatBoost f_CB)
+    catboost: CatBoostConfig = field(default_factory=CatBoostConfig)
+    # XGBoost classifier configuration (legacy / reference)
     xgb: XGBConfig = field(default_factory=XGBConfig)
     # TabResNet neural network configuration
     tabresnet: TabResNetConfig = field(default_factory=TabResNetConfig)
