@@ -28,6 +28,13 @@ Mathematical Pipeline Flow:
 # Enable modern Python 3.7+ typing capabilities
 from __future__ import annotations
 
+import os
+import sys
+
+_dir = os.path.dirname(os.path.abspath(__file__))
+if _dir not in sys.path:
+    sys.path.insert(0, _dir)
+
 # Import NumPy for array math, vectorization, and logical indexing
 import numpy as np
 # Import dataclass decorators for clean data structuring

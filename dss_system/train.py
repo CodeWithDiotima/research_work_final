@@ -22,6 +22,13 @@ Usage:
 # Enable modern Python 3.7+ type annotation behaviors
 from __future__ import annotations
 
+import os
+import sys
+
+_dir = os.path.dirname(os.path.abspath(__file__))
+if _dir not in sys.path:
+    sys.path.insert(0, _dir)
+
 # Import argparse to handle command-line flags (e.g., --data)
 import argparse
 # Import NumPy for numerical array operations and class distribution counts
