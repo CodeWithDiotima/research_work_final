@@ -1,21 +1,20 @@
 """
 data_processing.py
 ===================
-Implements Steps 1-3 of the uploaded specification:
+Implements Steps 1-3 of the clinical acquisition specification:
 
   Step 1 — Dataset representation      D = {(x_i, y_i)}_{i=1}^N
   Step 2 — Preprocessing               z_ij = (x_ij - mu_j) / (sigma_j + eps)
                                         x_ij -> phi_j(x_ij)   (categorical)
   Step 3 — Partial information         m_j in {0,1}, x_obs = x ⊙ m
 
-Also implements:
-  * Undersampling to EXACT class balance before the 70/15/15 split.
-  * The observation-mask sampler used to simulate partial patient records.
-
-This file is dataset-agnostic boilerplate: point `load_raw_dataframe`
-at the real CDC Diabetes Health Indicators CSV when it is available.
-Everything downstream (splits, encoders, masks) works off the schema
-declared in config.py.
+Fixed Pipeline Architecture:
+  * Load the original unbalanced CDC Diabetes Health Indicators dataset.
+  * Stratified 70/15/15 train/val/test split on `Diabetes_binary` BEFORE any balancing.
+    Validation and test maintain the natural population prevalence (~13.9% positive).
+  * Preprocessor fitted on TRAIN ONLY and applied consistently to Val and Test.
+  * All training records are preserved (class imbalance is handled via classifier weighting).
+  * Independent, sequentially sampled observation masks per split from a reproducible stream.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
+from sklearn.model_selection import train_test_split
 
 from config import (
     CFG,
@@ -64,12 +64,9 @@ def load_from_ucimlrepo() -> pd.DataFrame:
     y = dataset.data.targets.reset_index(drop=True)     # Diabetes_binary
 
     df = X.copy()
-    # y comes back as a 1-column dataframe; normalise its column name.
     target_col_in_y = y.columns[0]
     df[TARGET_COLUMN] = y[target_col_in_y].to_numpy()
 
-    # ucimlrepo's `ids` block (patient ID) isn't always populated; fall
-    # back to a positional ID if it's missing.
     ids = getattr(dataset.data, "ids", None)
     if ids is not None and len(ids) == len(df):
         id_col_in_ids = ids.columns[0]
@@ -89,13 +86,8 @@ def load_raw_dataframe(path: Optional[str] = None) -> pd.DataFrame:
     Load the raw CDC Diabetes Health Indicators dataframe.
 
     Expected columns: ID_COLUMN, TARGET_COLUMN, *FEATURE_COLUMNS.
-
-    - If `path` is given, loads that CSV directly (e.g. a local export
-      of the dataset, such as Kaggle's
-      diabetes_binary_health_indicators_BRFSS2015.csv).
-    - If `path` is None, fetches the dataset live from the UCI ML
-      Repository (id=891) via `ucimlrepo` — this matches
-      https://archive.ics.uci.edu/dataset/891/cdc+diabetes+health+indicators
+    - If `path` is given, loads that CSV directly.
+    - If `path` is None, fetches the dataset live from UCI ML Repository (id=891).
     """
     if path is None:
         return load_from_ucimlrepo()
@@ -108,54 +100,31 @@ def load_raw_dataframe(path: Optional[str] = None) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Exact-balance undersampling (performed BEFORE the 70/15/15 split)
+# Optional legacy undersampling utility (kept for backward compatibility)
 # ---------------------------------------------------------------------------
-# def undersample_exact_balance(df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
-#     """
-#     Randomly undersample the majority class so that the positive and
-#     negative class counts are EXACTLY equal.
-#     """
-#     pos = df[df[TARGET_COLUMN] == 1]
-#     neg = df[df[TARGET_COLUMN] == 0]
-#     n = min(len(pos), len(neg))
-#     pos_bal = pos.sample(n=n, random_state=random_state)
-#     neg_bal = neg.sample(n=n, random_state=random_state)
-#     balanced = pd.concat([pos_bal, neg_bal], axis=0)
-#     balanced = balanced.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
-#     assert (balanced[TARGET_COLUMN] == 1).sum() == (balanced[TARGET_COLUMN] == 0).sum()
-#     return balanced
-
-
 def undersample_exact_balance(df: pd.DataFrame, random_state: int = 42,
                                fraction: float = 0.5) -> pd.DataFrame:
     """
-    Undersample so positive and negative counts are EXACTLY equal, then
-    keep only `fraction` of that balanced set (default 0.5 = half),
-    taking the same number of rows from each class so the 50/50
-    balance is preserved.
-
-    Example: 35,346 diabetic + 218,334 non-diabetic
-      -> balanced:  35,346 + 35,346 = 70,692 rows
-      -> fraction=0.5: 17,673 + 17,673 = 35,346 rows
+    Legacy undersampling function: keeps equal counts of class 0 and 1.
+    Note: The pipeline now uses stratified splits on natural prevalence.
     """
     pos = df[df[TARGET_COLUMN] == 1]
     neg = df[df[TARGET_COLUMN] == 0]
 
-    n_full = min(len(pos), len(neg))          # exact-balance size per class
-    n_keep = int(n_full * fraction)           # rows kept per class
+    n_full = min(len(pos), len(neg))
+    n_keep = int(n_full * fraction)
 
     pos_bal = pos.sample(n=n_keep, random_state=random_state)
     neg_bal = neg.sample(n=n_keep, random_state=random_state)
 
     balanced = pd.concat([pos_bal, neg_bal], axis=0)
     balanced = balanced.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
-
     assert (balanced[TARGET_COLUMN] == 1).sum() == (balanced[TARGET_COLUMN] == 0).sum()
     return balanced
 
 
 # ---------------------------------------------------------------------------
-# 70 / 15 / 15 split
+# Stratified 70 / 15 / 15 split (Preserves real class prevalence in all splits)
 # ---------------------------------------------------------------------------
 @dataclass
 class Splits:
@@ -165,30 +134,44 @@ class Splits:
 
 
 def train_val_test_split(df: pd.DataFrame, cfg=CFG.split) -> Splits:
+    """
+    Splits DataFrame into train/val/test using stratified sampling on TARGET_COLUMN.
+    Validation and test sets preserve natural population prevalence without leakage.
+    """
     assert abs(cfg.train_frac + cfg.val_frac + cfg.test_frac - 1.0) < 1e-9
 
-    df = df.sample(frac=1.0, random_state=cfg.random_state).reset_index(drop=True)
-    n = len(df)
-    n_train = int(round(n * cfg.train_frac))
-    n_val = int(round(n * cfg.val_frac))
+    val_plus_test = cfg.val_frac + cfg.test_frac
+    train_df, temp_df = train_test_split(
+        df,
+        test_size=val_plus_test,
+        random_state=cfg.random_state,
+        stratify=df[TARGET_COLUMN],
+    )
 
-    train_df = df.iloc[:n_train]
-    val_df = df.iloc[n_train:n_train + n_val]
-    test_df = df.iloc[n_train + n_val:]
-    return Splits(train=train_df.reset_index(drop=True),
-                   val=val_df.reset_index(drop=True),
-                   test=test_df.reset_index(drop=True))
+    val_ratio = cfg.val_frac / val_plus_test
+    val_df, test_df = train_test_split(
+        temp_df,
+        test_size=(1.0 - val_ratio),
+        random_state=cfg.random_state,
+        stratify=temp_df[TARGET_COLUMN],
+    )
+
+    return Splits(
+        train=train_df.reset_index(drop=True),
+        val=val_df.reset_index(drop=True),
+        test=test_df.reset_index(drop=True),
+    )
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Preprocessing: encoding + normalization
+# Step 2 — Preprocessing: encoding + normalization (Fitted on Train only)
 # ---------------------------------------------------------------------------
 class Preprocessor:
     """
     Fits on TRAIN ONLY, then transforms train/val/test consistently.
 
     Continuous j:   z_ij = (x_ij - mu_j) / (sigma_j + eps)
-    Categorical j:  x_ij -> phi_j(x_ij)   (here: integer / one-hot codebook)
+    Categorical j:  x_ij -> phi_j(x_ij)   (integer codebook)
     """
 
     def __init__(self,
@@ -238,18 +221,19 @@ def build_feature_matrix(df: pd.DataFrame,
 # ---------------------------------------------------------------------------
 def sample_observation_masks(n_samples: int,
                               n_features: int = len(FEATURE_COLUMNS),
-                              cfg=CFG.mask) -> np.ndarray:
+                              cfg=CFG.mask,
+                              rng: Optional[np.random.Generator] = None) -> np.ndarray:
     """
     Sample observation masks m in {0,1}^F, one row per patient.
 
     m_j = 1 -> feature j available (observed)
     m_j = 0 -> feature j unavailable (missing / not yet acquired)
 
-    Each patient's observed fraction is drawn uniformly from
-    [min_observed_frac, max_observed_frac], simulating the state of a
-    partially-acquired record at some point in the acquisition loop.
+    Accepts an explicit `rng` generator stream so train/val/test get
+    independent, non-repeating mask sequences.
     """
-    rng = np.random.default_rng(cfg.random_state)
+    if rng is None:
+        rng = np.random.default_rng(cfg.random_state)
     masks = np.zeros((n_samples, n_features), dtype=np.int64)
     for i in range(n_samples):
         frac = rng.uniform(cfg.min_observed_frac, cfg.max_observed_frac)
@@ -261,10 +245,7 @@ def sample_observation_masks(n_samples: int,
 
 def apply_mask(X: np.ndarray, m: np.ndarray, fill_value: float = 0.0) -> np.ndarray:
     """
-    x_obs = x ⊙ m  (unobserved entries filled with `fill_value`, since raw
-    NaNs are inconvenient for most downstream models; the mask array `m`
-    itself is what actually encodes "missing" and should always be passed
-    alongside x_obs to any model/consumer).
+    x_obs = x ⊙ m  (unobserved entries filled with `fill_value`).
     """
     X_obs = X.copy()
     X_obs[m == 0] = fill_value
@@ -292,16 +273,41 @@ def prepare_dataset(path: Optional[str] = None,
                      df: Optional[pd.DataFrame] = None) -> PreparedData:
     """
     Full Step 1-3 pipeline:
-      load -> exact-balance undersample -> 70/15/15 split -> fit/transform
-      preprocessing on train only -> sample observation masks per split.
+      load raw -> stratified 70/15/15 split on Diabetes_binary ->
+      fit/transform preprocessing on train only ->
+      sample independent observation masks per split.
     """
     if df is None:
         df = load_raw_dataframe(path)
 
-    balanced = undersample_exact_balance(df, random_state=CFG.split.random_state)
-    print("dataframe_2:",balanced)
-    splits = train_val_test_split(balanced, cfg=CFG.split)
+    # Ensure target and ID are never in feature columns
+    assert TARGET_COLUMN not in FEATURE_COLUMNS, "Target column leaked into feature columns"
+    assert ID_COLUMN not in FEATURE_COLUMNS, "ID column leaked into feature columns"
 
+    n_total = len(df)
+    n_pos = int((df[TARGET_COLUMN] == 1).sum())
+    n_neg = int((df[TARGET_COLUMN] == 0).sum())
+    print(f"[Data Prep] Original dataset: {n_total:,} rows | "
+          f"Class 0: {n_neg:,} ({n_neg / n_total:.1%}), "
+          f"Class 1: {n_pos:,} ({n_pos / n_total:.1%})")
+
+    # Stratified 70/15/15 split on original unbalanced data
+    splits = train_val_test_split(df, cfg=CFG.split)
+
+    def _split_diag(name: str, split_df: pd.DataFrame) -> None:
+        sn = len(split_df)
+        sp = int((split_df[TARGET_COLUMN] == 1).sum())
+        s0 = int((split_df[TARGET_COLUMN] == 0).sum())
+        print(f"  - {name:5s}: {sn:,} rows ({sn / n_total:.1%}) | "
+              f"Class 0: {s0:,} ({s0 / sn:.1%}), Class 1: {sp:,} ({sp / sn:.1%})")
+
+    _split_diag("Train", splits.train)
+    _split_diag("Val", splits.val)
+    _split_diag("Test", splits.test)
+    print("  - Training-only resampling: None (keeping all training records; "
+          "class imbalance handled via CatBoost auto_class_weights='Balanced')")
+
+    # Fit preprocessor on Train ONLY; transform all splits
     pre = Preprocessor().fit(splits.train)
     train_p = pre.transform(splits.train)
     val_p = pre.transform(splits.val)
@@ -310,10 +316,13 @@ def prepare_dataset(path: Optional[str] = None,
     X_train, y_train = build_feature_matrix(train_p)
     X_val, y_val = build_feature_matrix(val_p)
     X_test, y_test = build_feature_matrix(test_p)
+    print(f"  - Final input features: F = {X_train.shape[1]}")
 
-    m_train = sample_observation_masks(len(X_train), cfg=CFG.mask)
-    m_val = sample_observation_masks(len(X_val), cfg=CFG.mask)
-    m_test = sample_observation_masks(len(X_test), cfg=CFG.mask)
+    # Sequential master RNG so train/val/test get independent, non-repeating mask patterns
+    master_rng = np.random.default_rng(CFG.mask.random_state)
+    m_train = sample_observation_masks(len(X_train), cfg=CFG.mask, rng=master_rng)
+    m_val = sample_observation_masks(len(X_val), cfg=CFG.mask, rng=master_rng)
+    m_test = sample_observation_masks(len(X_test), cfg=CFG.mask, rng=master_rng)
 
     return PreparedData(
         preprocessor=pre,
@@ -324,42 +333,17 @@ def prepare_dataset(path: Optional[str] = None,
 
 
 if __name__ == "__main__":
-    # Smoke test with synthetic data matching the schema to test the pipeline offline.
-    # 1. Initialize a seeded random number generator for reproducible synthetic data
+    # Smoke test data prep pipeline with synthetic data
     rng = np.random.default_rng(0)
-
-    # 2. Number of synthetic patient records to generate for the smoke test
     n = 2000
-
-    # 3. Create initial DataFrame with unique sequential patient IDs (0 to n-1)
     synth = pd.DataFrame({ID_COLUMN: np.arange(n)})
-
-    # 4. Populate continuous features (e.g., BMI, MentHlth, PhysHlth)
-    #    Sampled from a normal/Gaussian distribution (mean=25, std=5)
     for j in CONTINUOUS_FEATURES:
         synth[j] = rng.normal(25, 5, size=n)
-
-    # 5. Populate categorical features (e.g., HighBP, Smoker, GenHlth, etc.)
-    #    Sampled as discrete integers in the range [0, 4]
     for j in CATEGORICAL_FEATURES:
         synth[j] = rng.integers(0, 5, size=n)
-
-    # 6. Populate the binary target column (Diabetes_binary: 0 for negative, 1 for positive)
-    synth[TARGET_COLUMN] = rng.integers(0, 2, size=n)
+    # Simulate imbalanced target (15% positive)
+    synth[TARGET_COLUMN] = (rng.uniform(0, 1, size=n) < 0.15).astype(int)
 
     prepared = prepare_dataset(df=synth)
-    print("X_train:", prepared.X_train.shape, "y_train balance:",
-          np.bincount(prepared.y_train))
-    print("mask example:", prepared.m_train[0])
-    final_dataset= prepare_dataset()
-
-    print("X_train_1",final_dataset.X_train.shape)
-    print("y_train",np.bincount(final_dataset.y_train))
-    # # print("m_train",final_dataset.m_train[0][0])
-    # # print("X_val",final_dataset.X_val.shape)
-    # # print("X_val",final_dataset.y_val.shape)
-    # # print("m_val",final_dataset.m_val.shape)
-    # # print("X_test",final_dataset.X_test.shape)
-    # # print("y_test",final_dataset.y_test.shape)
-    # # print("m_test",final_dataset.m_test.shape)
- 
+    print("\nSmoke test passed: X_train shape:", prepared.X_train.shape,
+          "train class balance:", np.bincount(prepared.y_train))
