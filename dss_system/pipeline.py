@@ -52,7 +52,7 @@ from acquisition import (
     acquire_actual_value,
 )
 # Import individual model wrappers
-from models.catboost_model import CatBoostClassifier
+from models.lightgbm_model import LightGBMClassifierWrapper
 from models.cvae import CVAETrainer
 
 
@@ -60,27 +60,32 @@ from models.cvae import CVAETrainer
 class TrainedSystem:
     """
     Container packaging all trained models and structures needed at inference time:
-    - catboost: Fitted CatBoost gradient boosted tree classifier (f_CB)
+    - lightgbm: Fitted LightGBM gradient boosted tree classifier (f_LGBM)
     - cvae: Fitted Conditional Variational Autoencoder missing-value generator
     - graph: Clinical Information Graph capturing feature-feature correlations
     - feature_names: Ordered list of all 21 clinical feature names
     - fusion_weights: Optional[FusionWeights] (retained for backward compatibility)
     """
-    catboost: CatBoostClassifier
+    lightgbm: LightGBMClassifierWrapper
     cvae: CVAETrainer
     graph: ClinicalGraph
     feature_names: List[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
     fusion_weights: Optional[FusionWeights] = None
 
     @property
+    def catboost(self):
+        """Backward-compatibility alias."""
+        return self.lightgbm
+
+    @property
     def xgb(self):
         """Backward-compatibility alias."""
-        return self.catboost
+        return self.lightgbm
 
     @property
     def tabresnet(self):
         """Backward-compatibility alias."""
-        return self.catboost
+        return self.lightgbm
 
 
 def _candidate_value_sampler(system: TrainedSystem, cfg=CFG.acquisition):
@@ -110,7 +115,7 @@ def build_model_bundle(system: TrainedSystem) -> ModelBundle:
     Packages model inference functions into a clean ModelBundle interface
     expected by the feature acquisition module.
     """
-    predict_fn = lambda X_obs, m: system.catboost.predict_proba_y1(X_obs, m)
+    predict_fn = lambda X_obs, m: system.lightgbm.predict_proba_y1(X_obs, m)
     return ModelBundle(
         classifier_predict=predict_fn,
         sample_candidate_values=_candidate_value_sampler(system),
@@ -193,10 +198,11 @@ def run_adaptive_acquisition(
         # -------------------------------------------------------------------
         # Step 4-6: Current Single-Classifier Prediction
         # -------------------------------------------------------------------
-        # Predict risk probability from CatBoost using currently observed features
+        # Predict risk probability from LightGBM using currently observed features
         p_t = models.classifier_predict(Xo, mm)
-        # Convert continuous probabilities into binary labels: 1 if p_t >= 0.5 else 0
-        y_hat_t = predict_label(p_t)
+        # Convert continuous probabilities into binary labels: 1 if p_t >= threshold else 0
+        th = getattr(system.lightgbm, "best_threshold_", 0.5)
+        y_hat_t = predict_label(p_t, threshold=th)
 
         # -------------------------------------------------------------------
         # Step 7-14: Decision Sufficiency Evaluation under CVAE Completions
@@ -216,7 +222,7 @@ def run_adaptive_acquisition(
         for mi in range(M):
             profile = plausible[mi]
             p_plaus[mi] = models.classifier_predict(profile, full_mask)
-            y_plaus[mi] = predict_label(p_plaus[mi])
+            y_plaus[mi] = predict_label(p_plaus[mi], threshold=th)
 
         # Calculate Classification Stability (CS_t), Predictive Divergence (PD_t), and DSS_t
         cs_t, pd_t, dss_t = evaluate_stability_and_dss(
@@ -329,15 +335,15 @@ def run_adaptive_acquisition(
 def train_full_system(prepared, cfg=CFG) -> TrainedSystem:
     """
     Orchestrates the entire system training process before running inference:
-    1. Trains CatBoost classifier on partially observed data with masks.
+    1. Trains LightGBM classifier on partially observed data with masks.
     2. Trains CVAE to model the distribution of missing features given observed features.
     3. Constructs the Clinical Information Graph capturing mutual information relationships.
     """
     # -----------------------------------------------------------------------
-    # Step 1: Train the CatBoost Classifier (f_CB)
+    # Step 1: Train the LightGBM Classifier (f_LGBM)
     # -----------------------------------------------------------------------
-    print("[1/3] Training CatBoost classifier (f_CB)...")
-    catboost = CatBoostClassifier(cfg.catboost).fit(
+    print("[1/3] Training LightGBM classifier (f_LGBM)...")
+    lightgbm = LightGBMClassifierWrapper(cfg.lightgbm).fit(
         prepared.X_train * prepared.m_train, prepared.m_train, prepared.y_train,
         prepared.X_val * prepared.m_val, prepared.m_val, prepared.y_val,
     )
@@ -360,7 +366,7 @@ def train_full_system(prepared, cfg=CFG) -> TrainedSystem:
     
     # Return the assembled trained system bundle
     return TrainedSystem(
-        catboost=catboost,
+        lightgbm=lightgbm,
         cvae=cvae,
         graph=graph,
         fusion_weights=FusionWeights(w_xgb=1.0, w_tr=0.0),

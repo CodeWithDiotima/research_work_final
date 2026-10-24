@@ -3,8 +3,8 @@ fusion.py
 =========
 Decision prediction and label determination for the DSS/DSG System.
 
-In the single-classifier architecture (f_CB):
-    p_t = p_catboost
+In the single-classifier architecture (f_LGBM):
+    p_t = p_lightgbm
     y_hat_t = argmax_y p_t(y)  ( -> 1 if p_t >= threshold else 0 )
 
 Legacy multi-model fusion signatures are retained for backward compatibility.
@@ -34,8 +34,8 @@ def fuse(
     weights: Optional[FusionWeights] = None,
 ) -> np.ndarray:
     """
-    In the single CatBoost architecture:
-        p_t = p_catboost
+    In the single LightGBM architecture:
+        p_t = p_lightgbm
     Passes through p_primary directly when used with a single model.
     Retains weighted linear combination if legacy two-model predictions and weights are provided.
     """

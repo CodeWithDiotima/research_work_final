@@ -96,7 +96,7 @@ def normalized_costs(feature_names: List[str], cfg=CFG.acquisition,
 # ---------------------------------------------------------------------------
 @dataclass
 class ModelBundle:
-    """The primary diagnostic classifier (CatBoost) + generative model, bundled together
+    """The primary diagnostic classifier (LightGBM) + generative model, bundled together
     so acquisition.py doesn't need to import model internals directly."""
     classifier_predict: callable       # (X_obs, m) -> p_t = P(Y=1 | x_obs, m)
     sample_candidate_values: callable  # (X_obs, m, feature_idx, K) -> (K, batch) values
@@ -148,7 +148,7 @@ def expected_future_dss_for_feature(
                                              and CFG.cvae.n_samples_M)
         M_samples, _, _ = plausible.shape
 
-        # Step 19: run single CatBoost classifier on candidate observation
+        # Step 19: run single LightGBM classifier on candidate observation
         p_t_k = predict_fn(X_obs_k, m_k)
         y_hat_k = predict_label(p_t_k)
 
