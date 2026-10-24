@@ -25,14 +25,24 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 from sklearn.model_selection import train_test_split
 
-from config import (
-    CFG,
-    ID_COLUMN,
-    TARGET_COLUMN,
-    FEATURE_COLUMNS,
-    CONTINUOUS_FEATURES,
-    CATEGORICAL_FEATURES,
-)
+try:
+    from config import (
+        CFG,
+        ID_COLUMN,
+        TARGET_COLUMN,
+        FEATURE_COLUMNS,
+        CONTINUOUS_FEATURES,
+        CATEGORICAL_FEATURES,
+    )
+except ImportError:
+    from dss_system.config import (
+        CFG,
+        ID_COLUMN,
+        TARGET_COLUMN,
+        FEATURE_COLUMNS,
+        CONTINUOUS_FEATURES,
+        CATEGORICAL_FEATURES,
+    )
 
 
 # ---------------------------------------------------------------------------
