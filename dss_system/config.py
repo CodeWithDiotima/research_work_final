@@ -90,6 +90,8 @@ class MaskConfig:
     max_observed_frac: float = 0.60
     # Random seed for reproducible mask generation
     random_state: int = 42
+    # Number of different random masks per training patient (mask augmentation)
+    train_augmentation_k: int = 3
 
 
 # ===========================================================================
@@ -111,10 +113,10 @@ class CVAEConfig:
     dropout: float = 0.1
     # Learning rate for the Adam optimizer during CVAE training
     lr: float = 1e-3
-    # Number of full training epochs over the dataset
-    epochs: int = 100
-    # Number of patient profiles processed in one gradient update step
-    batch_size: int = 256
+    # Number of full training epochs over the dataset (25 epochs is ample for 500k+ augmented samples)
+    epochs: int = 25
+    # Number of patient profiles processed in one gradient update step (1024 optimizes CPU/GPU vectorization)
+    batch_size: int = 1024
     # Weight of KL divergence in ELBO loss (Loss = Reconstruction + beta * KL)
     beta: float = 1.0
     # Number of plausible complete profiles M sampled per patient to assess stability (Step 8)

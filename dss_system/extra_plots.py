@@ -208,3 +208,49 @@ def history_from_xgb(evals_result: dict, loss_metric: str = "logloss", err_metri
     if err_metric in va:
         out["val_acc"] = [1.0 - e for e in va[err_metric]]
     return out
+
+
+def main():
+    """
+    Runnable entry point: loads the trained system and generates all
+    diagnostic plots (confusion matrix heatmap, ROC curve, PR curve,
+    and model comparison bar chart) into evaluation_plots/.
+    """
+    import sys
+    _dir = os.path.dirname(os.path.abspath(__file__))
+    if _dir not in sys.path:
+        sys.path.insert(0, _dir)
+
+    from data_processing import prepare_dataset
+    from metrics import load_trained_system, DEFAULT_CHECKPOINT_PATH
+    from pipeline import train_full_system
+    from evaluate import evaluate_system, evaluate_experiments_a_and_b
+
+    print("\n[extra_plots] Preparing dataset for evaluation...")
+    prepared = prepare_dataset()
+
+    print(f"[extra_plots] Loading trained model from {DEFAULT_CHECKPOINT_PATH}...")
+    system = load_trained_system(DEFAULT_CHECKPOINT_PATH)
+    if system is None:
+        print("[extra_plots] No checkpoint found; training a fresh system bundle...")
+        system = train_full_system(prepared)
+
+    print("\n[extra_plots] Generating evaluation and diagnostic plots...")
+    # 1. Confusion matrix heatmap, ROC curve, PR curve, model comparison
+    evaluate_system(system, prepared)
+
+    # 2. Experiment A vs B comparison plot (Full vs Masked)
+    evaluate_experiments_a_and_b(system, prepared)
+
+    # 3. Training history plots if available
+    if hasattr(system.lightgbm, "history") and system.lightgbm.history:
+        plot_training_history(system.lightgbm.history, model_name="LightGBM")
+
+    print("\n[extra_plots] All plots have been generated and saved to 'evaluation_plots/':")
+    for f in sorted(os.listdir(OUT_DIR)):
+        if f.endswith(".png"):
+            print(f"  - {os.path.join(OUT_DIR, f)}")
+
+
+if __name__ == "__main__":
+    main()

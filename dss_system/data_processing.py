@@ -277,6 +277,8 @@ class PreparedData:
     m_train: np.ndarray
     m_val: np.ndarray
     m_test: np.ndarray
+    X_train_orig: Optional[np.ndarray] = None
+    y_train_orig: Optional[np.ndarray] = None
 
 
 def prepare_dataset(path: Optional[str] = None,
@@ -330,16 +332,33 @@ def prepare_dataset(path: Optional[str] = None,
 
     # Sequential master RNG so train/val/test get independent, non-repeating mask patterns
     master_rng = np.random.default_rng(CFG.mask.random_state)
-    m_train = sample_observation_masks(len(X_train), cfg=CFG.mask, rng=master_rng)
+
+    k_aug = getattr(CFG.mask, "train_augmentation_k", 1)
+    if k_aug > 1:
+        # Step 3b — Mask Augmentation: tile training records K times, each with
+        # an independently sampled observation mask. This teaches the diagnostic
+        # classifier and CVAE to generalize across diverse missing-information patterns.
+        X_train_aug = np.tile(X_train, (k_aug, 1))
+        y_train_aug = np.tile(y_train, k_aug)
+        m_train = sample_observation_masks(len(X_train_aug), cfg=CFG.mask, rng=master_rng)
+        print(f"  - Training mask augmentation: K={k_aug} random masks per patient "
+              f"({len(X_train):,} -> {len(X_train_aug):,} rows)")
+        X_train_final, y_train_final = X_train_aug, y_train_aug
+    else:
+        m_train = sample_observation_masks(len(X_train), cfg=CFG.mask, rng=master_rng)
+        X_train_final, y_train_final = X_train, y_train
+
+    # Validation and test splits preserve 1 realistic mask per record (no augmentation)
     m_val = sample_observation_masks(len(X_val), cfg=CFG.mask, rng=master_rng)
     m_test = sample_observation_masks(len(X_test), cfg=CFG.mask, rng=master_rng)
 
     return PreparedData(
         preprocessor=pre,
-        X_train=X_train, y_train=y_train,
+        X_train=X_train_final, y_train=y_train_final,
         X_val=X_val, y_val=y_val,
         X_test=X_test, y_test=y_test,
-        m_train=m_train, m_val=m_val, m_test=m_test)
+        m_train=m_train, m_val=m_val, m_test=m_test,
+        X_train_orig=X_train, y_train_orig=y_train)
 
 
 if __name__ == "__main__":

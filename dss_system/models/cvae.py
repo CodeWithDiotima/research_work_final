@@ -125,16 +125,23 @@ class CVAE(nn.Module):
 
 
 class CVAETrainer:
-    def __init__(self, feature_dim: int, cfg=CFG.cvae, device: str = CFG.device):
+    def __init__(self, feature_dim: int, cfg=CFG.cvae, device: str = None):
         self.cfg = cfg
-        self.device = device
-        self.model = CVAE(feature_dim, cfg).to(device)
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else getattr(CFG, "device", "cpu")
+        else:
+            self.device = device
+        self.model = CVAE(feature_dim, cfg).to(self.device)
 
     def fit(self, X_train: np.ndarray, m_train: np.ndarray):
         X = torch.tensor(X_train, dtype=torch.float32)
         M = torch.tensor(m_train, dtype=torch.float32)
         loader = DataLoader(TensorDataset(X, M), batch_size=self.cfg.batch_size, shuffle=True)
         opt = torch.optim.AdamW(self.model.parameters(), lr=self.cfg.lr)
+
+        total_samples = len(X)
+        print(f"  [CVAE] Training on {self.device.upper()} ({total_samples:,} samples | "
+              f"batch_size={self.cfg.batch_size} | epochs={self.cfg.epochs})...")
 
         self.model.train()
         for epoch in range(self.cfg.epochs):
@@ -147,6 +154,12 @@ class CVAETrainer:
                 loss.backward()
                 opt.step()
                 total += loss.item() * xb.size(0)
+
+            avg_loss = total / total_samples
+            # Print live progress every 5 epochs and on the last epoch
+            if (epoch + 1) % 5 == 0 or (epoch + 1) == self.cfg.epochs or self.cfg.epochs <= 10:
+                print(f"    Epoch {epoch + 1:2d}/{self.cfg.epochs:2d} | Avg ELBO Loss: {avg_loss:.4f}")
+
         return self
 
     def generate_plausible_profiles(self, X_obs: np.ndarray, m: np.ndarray,

@@ -369,7 +369,9 @@ def train_full_system(prepared, cfg=CFG) -> TrainedSystem:
     # -----------------------------------------------------------------------
     print("[3/3] Constructing Clinical Information Graph...")
     # Nodes V = 21 features; Edges E weighted by mutual information and clinical association
-    graph = build_clinical_graph(prepared.X_train, prepared.y_train)
+    X_graph = getattr(prepared, "X_train_orig", prepared.X_train)
+    y_graph = getattr(prepared, "y_train_orig", prepared.y_train)
+    graph = build_clinical_graph(X_graph, y_graph)
     
     # Return the assembled trained system bundle
     return TrainedSystem(
