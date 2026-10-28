@@ -71,6 +71,7 @@ Incomplete Patient Presentation (20%-60% observed features)
 
 To ensure complete readability across all environments (standard Markdown viewers, GitHub, text editors, and terminals), all formulas and parameters are presented in clear, readable notation.
 
+<<<<<<< HEAD
 ---
 
 ### 4.1 Classification Stability (CS_t)
@@ -140,6 +141,17 @@ Next Test to Order: j* = argmax_{j not yet observed} ( S_j )
 | **Graph Connectivity** | `Conn_tilde_j` | lambda_2 = 0.15 | Centrality and correlation of feature j with remaining unobserved features in the Clinical Graph. |
 | **Decision Gain (DSG)** | `DSG_tilde_j` | lambda_3 = 0.40 | Expected increase in Decision Sufficiency Score if test j is ordered (Expected DSS_{t+1} - DSS_t). |
 | **Clinical Cost Penalty** | `C_tilde_j` | lambda_4 = 0.20 | Combined monetary, procedural, and invasiveness cost of ordering test j (normalized). |
+=======
+- **Predictive Divergence ($\widetilde{PD}_t \in [0, 1]$)**:  
+ PDt =
+1
+M
+MΣ︂
+m=1
+D(m)
+JS
+  Calculates the normalized Jensen–Shannon Divergence between the base prediction $p_t$ and counterfactual probabilities $\tilde{p}^{(m)}$.
+>>>>>>> 8d47cfbbeac8a50fc9e619158c4d8751c5f70a63
 
 
 
