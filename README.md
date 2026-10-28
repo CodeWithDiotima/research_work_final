@@ -71,7 +71,6 @@ Incomplete Patient Presentation (20%-60% observed features)
 
 To ensure complete readability across all environments (standard Markdown viewers, GitHub, text editors, and terminals), all formulas and parameters are presented in clear, readable notation.
 
-<<<<<<< HEAD
 ---
 
 ### 4.1 Classification Stability (CS_t)
