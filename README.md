@@ -74,7 +74,13 @@ Incomplete Patient Presentation (20%-60% observed features)
   Measures the fraction of CVAE counterfactual completions that preserve the current diagnostic label $\hat{y}_t$.
 
 - **Predictive Divergence ($\widetilde{PD}_t \in [0, 1]$)**:  
-  $$\widetilde{PD}_t = \frac{1}{M} \sum_{m=1}^M \frac{\mathrm{JSD}\left(\mathrm{Bern}(p_t) \parallel \mathrm{Bern}(\tilde{p}^{(m)})\right)}{\ln 2}$$
+ PDt =
+1
+M
+MΣ︂
+m=1
+D(m)
+JS
   Calculates the normalized Jensen–Shannon Divergence between the base prediction $p_t$ and counterfactual probabilities $\tilde{p}^{(m)}$.
 
 - **Decision Sufficiency Score ($DSS_t \in [0, 1]$)**:  
