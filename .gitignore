@@ -43,3 +43,6 @@ models/*.json
 models/*.ubj
 models/*.pt
 catboost_info/
+one_page_report.tex
+overleaf_report.zip
+ONE_PAGE_PROJECT_ABSTRACT_REPORT.md
