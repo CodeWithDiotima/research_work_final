@@ -13,16 +13,16 @@
 
 Conventional clinical machine learning systems presuppose that all diagnostic variables are fully observed at decision time. In acute clinical practice, however, obtaining patient features incurs substantial financial cost, phlebotomy invasiveness, and diagnostic delay. Standard machine learning models either rely on passive imputation or employ myopic active acquisition heuristics without formal guarantees on whether collected evidence is **sufficient** to render a stable diagnosis.
 
-This project designs, implements, and validates the **Decision-Sufficiency-Guided (DSS/DSG)** framework for sequential, uncertainty-aware clinical information acquisition under partial observability. Evaluated on the CDC Diabetes Health Indicators dataset ($253,680$ records, natural positive prevalence $\sim 13.9\%$), the system formulates diagnostic inquiry as an adaptive trajectory under synthetic partial observability ($20\%-60\%$ features initially observed).
+This project designs, implements, and validates the **Decision-Sufficiency-Guided (DSS/DSG)** framework for sequential, uncertainty-aware clinical information acquisition under partial observability. Evaluated on the CDC Diabetes Health Indicators dataset (253,680 records, natural positive prevalence ~13.9%), the system formulates diagnostic inquiry as an adaptive trajectory under synthetic partial observability (20%-60% features initially observed).
 
 The framework unifies five modules:
-1. **Primary Classifier ($f_{\text{LGBM}}$)**: A gradient-boosted decision tree receiving $2F=42$-dimensional concatenated inputs (observed values with native `NaN` mask encoding and binary mask indicators) trained with $K$-fold mask augmentation and balanced class weighting.
-2. **Plausible Profile Generator (CVAE)**: A PyTorch Conditional Variational Autoencoder sampling $M$ plausible complete counterfactual profiles $\tilde{\mathbf{x}} \sim P_\Psi(\mathbf{x}_{\text{miss}} \mid \mathbf{x}_{\text{obs}})$ in a single forward pass.
-3. **Decision Sufficiency Metric ($DSS_t \in [0, 1]$)**: An information-theoretic criterion unifying Classification Stability ($CS_t$) and normalized Jensen–Shannon Predictive Divergence ($\widetilde{PD}_t$).
-4. **Clinical Information Graph ($G$)**: An empirical graph $G=(V, E, W)$ mapping mutual information dependencies and structural variable connectivity ($\text{Conn}_j$).
-5. **Multi-Objective Test Acquisition Policy ($S_j$)**: A dynamic greedy policy selecting the next best test by balancing diagnostic relevance, graph topology, expected decision gain ($DSG_j$), and multi-component clinical acquisition costs ($C_j$).
+1. **Primary Classifier (f_LGBM)**: A gradient-boosted decision tree receiving 42-dimensional concatenated inputs (observed values with native `NaN` mask encoding and binary mask indicators) trained with K-fold mask augmentation and balanced class weighting.
+2. **Plausible Profile Generator (CVAE)**: A PyTorch Conditional Variational Autoencoder sampling M plausible complete counterfactual profiles `x_tilde ~ P(x_miss | x_obs)` in a single forward pass.
+3. **Decision Sufficiency Metric (DSS_t in [0, 1])**: An information-theoretic criterion unifying Classification Stability (CS_t) and normalized Jensen–Shannon Predictive Divergence (PD_t).
+4. **Clinical Information Graph (G)**: An empirical graph G = (V, E, W) mapping mutual information dependencies and structural variable connectivity (Conn_j).
+5. **Multi-Objective Test Acquisition Policy (S_j)**: A dynamic greedy policy selecting the next best test by balancing diagnostic relevance, graph topology, expected decision gain (DSG_j), and multi-component clinical acquisition costs (C_j).
 
-Empirical validation demonstrates that the adaptive acquisition loop achieves a **100% early-stopping rate** when decision sufficiency is reached, acquiring on average fewer than $1$ additional test per patient ($0.17$ tests in simulation cohorts, or $<0.8\%$ of all features). This sequential collection elevates balanced accuracy from **$82.76\%$ to $86.21\%$** and improves specificity from **$65.52\%$ to $72.41\%$** while maintaining **$100\%$ sensitivity**, demonstrating that certified decision sufficiency substantially cuts diagnostic overhead while enhancing patient risk stratification.
+Empirical validation demonstrates that the adaptive acquisition loop achieves a **100% early-stopping rate** when decision sufficiency is reached, acquiring on average fewer than 1 additional test per patient (0.17 tests in simulation cohorts, or <0.8% of all features). This sequential collection elevates balanced accuracy from **82.76% to 86.21%** and improves specificity from **65.52% to 72.41%** while maintaining **100% sensitivity**, demonstrating that certified decision sufficiency substantially cuts diagnostic overhead while enhancing patient risk stratification.
 
 ---
 
@@ -30,9 +30,9 @@ Empirical validation demonstrates that the adaptive acquisition loop achieves a 
 
 | Clinical Reality | Traditional ML Limitation | DSS Framework Solution |
 | :--- | :--- | :--- |
-| **Partial Observability**: Patients present with incomplete history, missing lab panels, and partial survey data. | Assumes a complete $F$-dimensional feature vector $\mathbf{x} \in \mathbb{R}^F$ is always available at test time. | Explicit $2F$ masked representation ($[\mathbf{x}_{\text{obs}}, \mathbf{m}]$) with $K$-fold training mask augmentation. |
-| **High Test Burden**: Ordering all 21 diagnostic tests incurs financial expense, lab wait times, and physical discomfort. | Passively imputes missing fields or greedily orders tests without accounting for monetary or procedural costs. | Multi-component clinical cost model $C_j$ factoring acquisition, communication, and computational overhead. |
-| **Stopping Ambiguity**: Physicians must know when "enough is enough" to make a safe, definitive diagnosis. | Myopically optimizes immediate entropy or mutual information with no stopping certification. | Rigorous stopping rule: halt when $DSS_t \ge \tau_{\text{DSS}}$, confirming stability under counterfactual completions. |
+| **Partial Observability**: Patients present with incomplete history, missing lab panels, and partial survey data. | Assumes a complete feature vector x in R^F is always available at test time. | Explicit 42-dimensional masked representation ([x_obs, m]) with K-fold training mask augmentation. |
+| **High Test Burden**: Ordering all 21 diagnostic tests incurs financial expense, lab wait times, and physical discomfort. | Passively imputes missing fields or greedily orders tests without accounting for monetary or procedural costs. | Multi-component clinical cost model C_j factoring acquisition, communication, and computational overhead. |
+| **Stopping Ambiguity**: Physicians must know when "enough is enough" to make a safe, definitive diagnosis. | Myopically optimizes immediate entropy or mutual information with no stopping certification. | Rigorous stopping rule: halt when DSS_t >= tau_DSS, confirming stability under counterfactual completions. |
 
 ---
 
@@ -42,48 +42,106 @@ Empirical validation demonstrates that the adaptive acquisition loop achieves a 
 Incomplete Patient Presentation (20%-60% observed features)
                      │
                      ▼
-  [1] Partial Observability Classifier (LightGBM, 2F=42 features)
+  [1] Partial Observability Classifier (LightGBM, 42 features)
                      │ ──> Current Risk Probability p_t = P(Y=1 | x_obs, m)
                      ▼
-  [2] Counterfactual Generation (CVAE: M plausible completions x~ ~ P(x_miss | x_obs))
+  [2] Counterfactual Generation (CVAE: M plausible completions x_tilde ~ P(x_miss | x_obs))
                      │
                      ▼
-  [3] Decision Sufficiency Evaluation: DSS_t = α·CS_t + (1-α)·(1-PD_t)
+  [3] Decision Sufficiency Evaluation: DSS_t = alpha * CS_t + (1 - alpha) * (1 - PD_t)
                      │
         ┌────────────┴──────────────────────────┐
         │ DSS_t >= tau_DSS                      │ DSS_t < tau_DSS
         ▼                                       ▼
   [STOP: Final Diagnosis]          [4 & 5] Multi-Objective Greedy Acquisition
-                                   S_j = λ1·R_j + λ2·Conn_j + λ3·DSG_j - λ4·C_j
+                                   S_j = lambda_1*R_j + lambda_2*Conn_j + lambda_3*DSG_j - lambda_4*C_j
                                                 │
                                                 ▼ Order Test j*, Update x_obs, Repeat
 ```
 
-1. **Robust Primary Classifier ($f_{\text{LGBM}}$)**: Receives $[\mathbf{x}_{\text{obs}}, \mathbf{m}]$, encodes missing entries as `np.nan` (preserving true zeroes), uses `class_weight='balanced'`, and applies validation-tuned decision thresholds ($\tau^* \approx 0.46-0.49$) to protect minority sensitivity.
+1. **Robust Primary Classifier (f_LGBM)**: Receives [x_obs, m], encodes missing entries as `np.nan` (preserving true zeroes), uses `class_weight='balanced'`, and applies validation-tuned decision thresholds (tau* ~ 0.46-0.49) to protect minority sensitivity.
 2. **Generative Profile Modeler (CVAE)**: Single end-to-end conditional VAE trained with ELBO loss, eliminating compounding errors from chained autoregressive regressors.
 3. **Stability & Sufficiency Engine**: Evaluates prediction agreement across counterfactuals to determine if further testing could flip the clinical outcome.
-4. **Clinical Information Graph ($G$)**: Captures pair-wise mutual information $I(X_i; X_j)$ to quantify structural variable centrality and connectivity ($\text{Conn}_j$).
-5. **Adaptive Acquisition Loop ($S_j$)**: Evaluates expected Decision Stabilization Gain ($DSG_j$) and penalizes clinical burden ($C_j$).
+4. **Clinical Information Graph (G)**: Captures pair-wise mutual information I(X_i; X_j) to quantify structural variable centrality and connectivity (Conn_j).
+5. **Adaptive Acquisition Loop (S_j)**: Evaluates expected Decision Stabilization Gain (DSG_j) and penalizes clinical burden (C_j).
 
 ---
 
 ## 4. Key Mathematical Formulations
 
-- **Classification Stability ($CS_t \in [0, 1]$)**:  
-  $$CS_t = \frac{1}{M} \sum_{m=1}^M \mathbb{I}\left[\hat{y}^{(m)} = \hat{y}_t\right]$$
-  Measures the fraction of CVAE counterfactual completions that preserve the current diagnostic label $\hat{y}_t$.
+To ensure complete readability across all environments (standard Markdown viewers, GitHub, text editors, and terminals), all formulas and parameters are presented in clear, readable notation.
 
-- **Predictive Divergence ($\widetilde{PD}_t \in [0, 1]$)**:  
-  $$\widetilde{PD}_t = \frac{1}{M} \sum_{m=1}^M \frac{\mathrm{JSD}\left(\mathrm{Bern}(p_t) \parallel \mathrm{Bern}(\tilde{p}^{(m)})\right)}{\ln 2}$$
-  Calculates the normalized Jensen–Shannon Divergence between the base prediction $p_t$ and counterfactual probabilities $\tilde{p}^{(m)}$.
+---
 
-- **Decision Sufficiency Score ($DSS_t \in [0, 1]$)**:  
-  $$DSS_t = \alpha \cdot CS_t + (1 - \alpha) \cdot \left(1 - \widetilde{PD}_t\right), \quad \alpha = 0.6$$
-  The acquisition stops immediately once $DSS_t \ge \tau_{\text{DSS}}$ (e.g., $\tau_{\text{DSS}} = 0.85$).
+### 4.1 Classification Stability (CS_t)
 
-- **Multi-Objective Test Acquisition Score ($S_j$)**:  
-  $$S_j = \lambda_1 \tilde{R}_j + \lambda_2 \widetilde{\text{Conn}}_j + \lambda_3 \widetilde{DSG}_j - \lambda_4 \tilde{C}_j$$
-  Selects the next test $j^* = \arg\max_{j \notin \text{Obs}} S_j$ by trading off static clinical relevance ($R_j$), graph connectivity ($\text{Conn}_j$), expected stabilization gain ($DSG_j$), and cost penalty ($C_j$).
+Measures the proportion of counterfactual completions that yield the **exact same diagnosis** as the current prediction:
+
+```
+CS_t = (1 / M) * Sum_{m=1 to M} [ 1 if y_hat^(m) == y_hat_t, else 0 ]
+```
+
+- **In Plain Words:** `CS_t = (Number of counterfactual completions where predicted diagnosis == y_hat_t) / M`
+- **Range:** 0.0 to 1.0 (Higher is more stable; 1.0 represents 100% agreement across all counterfactuals).
+- **M:** Number of plausible counterfactual patient profiles generated by the CVAE (default: M = 10).
+- **y_hat_t:** Current binary diagnosis (0 = No Diabetes, 1 = Diabetes) based on observed features.
+- **y_hat^(m):** Diagnosis predicted on the m-th completed patient profile.
+
+---
+
+### 4.2 Predictive Divergence (PD_t)
+
+Quantifies how much the **predicted risk probability** fluctuates across counterfactual completions using normalized Jensen–Shannon Divergence (JSD):
+
+```
+PD_t = (1 / M) * Sum_{m=1 to M} [ JSD( p_t || p_tilde^(m) ) / ln(2) ]
+```
+
+- **In Plain Words:** `PD_t = Average Jensen-Shannon Divergence across all M completions / ln(2)`
+- **Range:** 0.0 to 1.0 (Lower is better; 0.0 means zero probability drift across completions).
+- **p_t:** Predicted risk probability P(Y=1 | x_obs, m) under currently observed features.
+- **p_tilde^(m):** Predicted risk probability evaluated on the m-th counterfactual completed profile.
+- **Division by ln(2):** Normalizes the divergence score strictly into the [0, 1] interval.
+
+---
+
+### 4.3 Decision Sufficiency Score (DSS_t)
+
+The core information-theoretic metric that determines whether diagnostic evidence is **sufficient** to safely stop ordering clinical tests:
+
+```
+DSS_t = alpha * CS_t + (1 - alpha) * (1 - PD_t)
+```
+
+- **In Plain Words:** `DSS_t = 0.6 * Classification_Stability + 0.4 * (1 - Predictive_Divergence)`
+- **Range:** 0.0 to 1.0 (Higher means greater confidence and stability).
+- **alpha:** Clinical trade-off weight (default: alpha = 0.6, prioritizing categorical diagnostic stability).
+- **Stopping Rule:** If `DSS_t >= tau_DSS` (default threshold: tau_DSS = 0.85), the system **terminates acquisition immediately** and confirms the diagnosis without ordering additional tests.
+
+---
+
+### 4.4 Multi-Objective Test Acquisition Score (S_j)
+
+When `DSS_t < tau_DSS`, the system evaluates all candidate unobserved tests `j` and greedily orders the test with the highest score:
+
+```
+S_j = (lambda_1 * R_tilde_j) + (lambda_2 * Conn_tilde_j) + (lambda_3 * DSG_tilde_j) - (lambda_4 * C_tilde_j)
+```
+
+```
+Next Test to Order: j* = argmax_{j not yet observed} ( S_j )
+```
+
+- **In Plain Words:** `Test Score S_j = [Relevance] + [Graph Connectivity] + [Expected Decision Gain] - [Cost Penalty]`
+
+| Component | Symbol | Default Weight | Clinical Role |
+| :--- | :---: | :---: | :--- |
+| **Diagnostic Relevance** | `R_tilde_j` | lambda_1 = 0.25 | Normalized mutual information between feature j and the diabetes diagnosis Y. |
+| **Graph Connectivity** | `Conn_tilde_j` | lambda_2 = 0.15 | Centrality and correlation of feature j with remaining unobserved features in the Clinical Graph. |
+| **Decision Gain (DSG)** | `DSG_tilde_j` | lambda_3 = 0.40 | Expected increase in Decision Sufficiency Score if test j is ordered (Expected DSS_{t+1} - DSS_t). |
+| **Clinical Cost Penalty** | `C_tilde_j` | lambda_4 = 0.20 | Combined monetary, procedural, and invasiveness cost of ordering test j (normalized). |
+
+
 
 ---
 
