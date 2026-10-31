@@ -24,12 +24,18 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
-from config import CFG
-from fusion import FusionWeights, fuse, predict_label
-from stability import evaluate_stability_and_dss
-from graph import ClinicalGraph
+try:
+    from config import CFG
+    from fusion import FusionWeights, fuse, predict_label
+    from stability import evaluate_stability_and_dss
+    from graph import ClinicalGraph
+except ImportError:
+    from dss_system.config import CFG
+    from dss_system.fusion import FusionWeights, fuse, predict_label
+    from dss_system.stability import evaluate_stability_and_dss
+    from dss_system.graph import ClinicalGraph
 
 
 # ---------------------------------------------------------------------------
@@ -90,13 +96,15 @@ def normalized_costs(feature_names: List[str], cfg=CFG.acquisition,
 # ---------------------------------------------------------------------------
 @dataclass
 class ModelBundle:
-    """The two diagnostic classifiers + generative model, bundled together
+    """The primary diagnostic classifier (CatBoost) + generative model, bundled together
     so acquisition.py doesn't need to import model internals directly."""
-    xgb_predict: callable   # (X_obs, m) -> p_XGB
-    tr_predict: callable    # (X_obs, m) -> p_TR
+    classifier_predict: callable       # (X_obs, m) -> p_t = P(Y=1 | x_obs, m)
     sample_candidate_values: callable  # (X_obs, m, feature_idx, K) -> (K, batch) values
     sample_plausible: callable         # (X_obs, m, n_samples) -> (M, batch, F) profiles
-    fusion_weights: FusionWeights
+    fusion_weights: Optional[Any] = None
+    # Legacy fallbacks:
+    xgb_predict: Optional[callable] = None
+    tr_predict: Optional[callable] = None
 
 
 def expected_future_dss_for_feature(
@@ -124,6 +132,9 @@ def expected_future_dss_for_feature(
 
     dss_per_candidate = np.zeros((K, batch), dtype=np.float64)
 
+    # Resolution function for prediction
+    predict_fn = models.classifier_predict if models.classifier_predict is not None else models.xgb_predict
+
     for k in range(K):
         # Temporarily set x_j = v_j^(k) and mark it observed.
         X_obs_k = X_obs.copy()
@@ -137,10 +148,8 @@ def expected_future_dss_for_feature(
                                              and CFG.cvae.n_samples_M)
         M_samples, _, _ = plausible.shape
 
-        # Step 19: run both classifiers on every plausible profile.
-        p_xgb_now = models.xgb_predict(X_obs_k, m_k)
-        p_tr_now = models.tr_predict(X_obs_k, m_k)
-        p_t_k = fuse(p_xgb_now, p_tr_now, models.fusion_weights)
+        # Step 19: run single CatBoost classifier on candidate observation
+        p_t_k = predict_fn(X_obs_k, m_k)
         y_hat_k = predict_label(p_t_k)
 
         p_plaus = np.zeros((M_samples, batch))
@@ -148,9 +157,7 @@ def expected_future_dss_for_feature(
         for mi in range(M_samples):
             profile = plausible[mi]  # (batch, F), fully observed
             full_mask = np.ones_like(m_k)
-            p_xgb_m = models.xgb_predict(profile, full_mask)
-            p_tr_m = models.tr_predict(profile, full_mask)
-            p_plaus[mi] = fuse(p_xgb_m, p_tr_m, models.fusion_weights)
+            p_plaus[mi] = predict_fn(profile, full_mask)
             y_plaus[mi] = predict_label(p_plaus[mi])
 
         # Steps 20-22: future class/probability stability -> future DSS.

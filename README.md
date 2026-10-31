@@ -1,56 +1,72 @@
 # Decision-Sufficiency-Guided Adaptive Clinical Information Acquisition System
 
-Boilerplate implementation of the uploaded 29-step pipeline (CDC Diabetes
-Health Indicators dataset, XGBoost + TabResNet fused classifier, CVAE
-missing-value generator, DSS/DSG-driven adaptive feature acquisition).
+Decision-Sufficiency-Guided (DSS/DSG) clinical information acquisition system using a single **CatBoost** diagnostic classifier, **Conditional Variational Autoencoder (CVAE)** profile generator, and Clinical Information Graph.
 
-## Layout
+---
 
-| File | Spec steps | What it does |
-|---|---|---|
-| `config.py` | — | All hyperparameters / thresholds (`tau_DSS`, `alpha`, `lambda_1..4`, etc.) |
-| `data_processing.py` | 1-3 | Load, exact-balance undersample, 70/15/15 split, encode/normalize, observation masks |
-| `models/xgboost_model.py` | 4 | `f_XGB(x_obs, m) -> p_XGB` |
-| `models/tabresnet.py` | 5 | `f_TR(x_obs, m) -> p_TR` (residual MLP, PyTorch) |
-| `models/cvae.py` | 7-8 | Conditional VAE realising `g_1..g_F`; samples `M` plausible complete profiles |
-| `fusion.py` | 6 | `p_t = w_XGB*p_XGB + w_TR*p_TR`, weight fitting on validation set |
-| `stability.py` | 12-15 | `CS_t`, JS-divergence `PD_t`, `DSS_t`, stopping rule |
-| `graph.py` | 16-17, 25 | Clinical information graph `G=(V,E,W)`, feature relevance `R_j`, connectivity `Conn_j` |
-| `acquisition.py` | 18-29 | Candidate-value evaluation, future DSS, `DSG_j`, cost `C_j`, score `S_j`, `argmax` selection |
-| `pipeline.py` | all | Trains the full system and runs the per-patient adaptive-acquisition loop |
-| `train.py` | — | CLI entry point: prepare data, train, report static fused test accuracy |
-| `main.py` | — | CLI entry point: train, then run the adaptive loop on a demo batch of patients |
+## Architecture Overview
 
-## Wiring in the real dataset
+1. **Stratified Preprocessing & Data Split**:
+   - Performs a clean **70/15/15** stratified split on `Diabetes_binary` preserving natural class prevalence (~13.9% positive in the CDC BRFSS dataset).
+   - Fits standardizers on the **training split only** and transforms validation/test splits to eliminate data leakage.
+   - Generates independent, reproducible observation masks for each split using sequential sub-RNGs.
 
-Everything currently runs against synthetic data shaped like the schema
-in `config.py` (21 features + `ID` + `Diabetes_binary`). Once the real
-CDC Diabetes Health Indicators file is available:
+2. **Single CatBoost Diagnostic Classifier ($f_{CB}$)**:
+   - Evaluates patient risk under partial observability: $f_{CB}(x_{obs}, m) \to p_t = P(Y=1 \mid x_{obs}, m)$.
+   - Augments inputs by encoding unobserved entries ($m_j = 0$) as `np.nan` (derived strictly from observation masks, leaving true clinical zeros intact) concatenated with binary mask indicators $m$ ($2 \times F = 42$ features).
+   - Utilizes `auto_class_weights="Balanced"` to naturally manage class imbalance without destructive majority undersampling.
+   - Utilizes `nan_mode="Min"` and early stopping on validation logloss.
 
-```python
-python train.py --data /path/to/cdc_diabetes_health_indicators.csv
-python main.py   # after editing main() to pass data_path=...
+3. **CVAE Counterfactual Completions**:
+   - Generates $M$ plausible complete patient profiles $x \sim P(x_{miss} \mid x_{obs})$ to evaluate decision stability.
+
+4. **Clinical Information Graph & Adaptive Acquisition**:
+   - Calculates Classification Stability ($CS_t$), Predictive Divergence ($PD_t$), and Decision Sufficiency Score ($DSS_t$).
+   - Dynamically selects next-best clinical tests by maximizing acquisition score $S_j = \lambda_1 R_j + \lambda_2 \text{Conn}_j + \lambda_3 \text{DSG}_j - \lambda_4 C_j$.
+
+---
+
+## File Layout
+
+| File | What it does |
+|---|---|
+| `dss_system/config.py` | Pipeline hyperparameters, `CatBoostConfig`, thresholds (`tau_DSS`, `alpha`, weights) |
+| `dss_system/data_processing.py` | Stratified 70/15/15 split, leak-free preprocessing, observation masks |
+| `dss_system/models/catboost_model.py` | Primary CatBoost diagnostic classifier with NaN masking ($2 \times F$) |
+| `dss_system/models/cvae.py` | Conditional VAE generative model ($g_1 \dots g_F$) for plausible completions |
+| `dss_system/fusion.py` | Single-classifier pass-through ($p_t = p_{\text{catboost}}$) & thresholding |
+| `dss_system/stability.py` | $CS_t$, Jensen-Shannon divergence $PD_t$, $DSS_t$, and stopping rule |
+| `dss_system/graph.py` | Clinical Information Graph $G=(V, E, W)$, relevance $R_j$, connectivity $\text{Conn}_j$ |
+| `dss_system/acquisition.py` | Candidate evaluation, future DSS, $\text{DSG}_j$, cost model $C_j$, test selection |
+| `dss_system/pipeline.py` | End-to-end training and per-patient adaptive acquisition loop |
+| `dss_system/evaluate.py` | Masked accuracy, confusion matrix heatmap, ROC/PR curves, plausible stability |
+| `dss_system/extra_plots.py` | Non-blocking plotting utilities (loss/accuracy curves, heatmaps) |
+| `dss_system/metrics.py` | Comprehensive evaluation suite, benchmark reporting, checkpointing |
+| `dss_system/train.py` | CLI entry point: dataset preparation and CatBoost system training |
+| `dss_system/main.py` | Full end-to-end demo: training, 3 evaluation checkpoints, adaptive simulation |
+
+---
+
+## Quick Start (PowerShell / Windows)
+
+### 1. Install Dependencies
+```powershell
+pip install -r requirements.txt
 ```
 
-`data_processing.load_raw_dataframe` is the only function that needs a
-real file path — nothing else needs to change.
+### 2. Train System
+```powershell
+python -m dss_system.train
+# Or pass a local CDC CSV file:
+python -m dss_system.train --data path/to/cdc_diabetes.csv
+```
 
-## Notes / places you'll likely want to tune
+### 3. Run Full Pipeline & Adaptive Acquisition Demo
+```powershell
+python -m dss_system.main
+```
 
-- `CONTINUOUS_FEATURES` / `CATEGORICAL_FEATURES` in `config.py` — adjust
-  once the real dataset's dtypes are confirmed (currently only `BMI`,
-  `MentHlth`, `PhysHlth` are treated as continuous, matching the CDC
-  schema; everything else is treated as categorical/ordinal).
-- `acquisition.DEFAULT_RAW_COSTS` — currently every feature defaults to
-  a flat acquisition/communication/computation cost of 1.0; populate
-  with real clinical costs (invasiveness, lab turnaround, etc.) once
-  available.
-- `graph._mutual_info_association` / relevance use a simple binned
-  mutual-information estimator — swap in a domain-specific association
-  measure if one is preferred.
-- `pipeline.run_adaptive_acquisition` loops over candidate features and
-  Monte-Carlo profiles in plain Python for clarity; vectorize/batch on
-  GPU before scaling to the full test set.
-- `torch` is required for `tabresnet.py` and `cvae.py` (not needed for
-  `xgboost_model.py`, `fusion.py`, `stability.py`, `graph.py`, or
-  `data_processing.py`).
+### 4. Run Comprehensive Metrics Benchmark
+```powershell
+python -m dss_system.metrics --quick --n-patients 20
+```

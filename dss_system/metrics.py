@@ -87,8 +87,7 @@ from pipeline import (
     run_adaptive_acquisition,
     train_full_system,
 )
-from models.xgboost_model import XGBClassifier
-from models.tabresnet import TabResNetClassifier
+from models.catboost_model import CatBoostClassifier
 from models.cvae import CVAETrainer
 
 DEFAULT_CHECKPOINT_PATH = os.path.join(_current_dir, "dss_checkpoint.pt")
@@ -349,9 +348,7 @@ def compute_stability_metrics(
     batch = X_obs.shape[0]
 
     # Predict observed state
-    p_xgb = system.xgb.predict_proba_y1(X_obs, m)
-    p_tr = system.tabresnet.predict_proba_y1(X_obs, m)
-    p_t = fuse(p_xgb, p_tr, system.fusion_weights)
+    p_t = system.catboost.predict_proba_y1(X_obs, m)
     y_hat_t = predict_label(p_t)
 
     # Sample M plausible profiles via CVAE
@@ -364,9 +361,7 @@ def compute_stability_metrics(
 
     for i in range(M):
         profile = plausible[i]
-        px = system.xgb.predict_proba_y1(profile, full_mask)
-        pt = system.tabresnet.predict_proba_y1(profile, full_mask)
-        p_plaus[i] = fuse(px, pt, system.fusion_weights)
+        p_plaus[i] = system.catboost.predict_proba_y1(profile, full_mask)
         y_plaus[i] = predict_label(p_plaus[i])
 
     # Steps 12-14: Class stability, probability stability, and DSS
@@ -428,9 +423,7 @@ def evaluate_robustness_missingness(
         X_obs = apply_mask(X_sub, m)
 
         # Baseline masked prediction
-        p_xgb = system.xgb.predict_proba_y1(X_obs, m)
-        p_tr = system.tabresnet.predict_proba_y1(X_obs, m)
-        p_init = fuse(p_xgb, p_tr, system.fusion_weights)
+        p_init = system.catboost.predict_proba_y1(X_obs, m)
         y_init = predict_label(p_init)
         
         # Stability and initial DSS
@@ -633,16 +626,13 @@ def save_trained_system(system: TrainedSystem, path: str = DEFAULT_CHECKPOINT_PA
     """Serializes the TrainedSystem bundle to disk for instant subsequent evaluation."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     payload = {
-        "xgb": system.xgb,
-        "tabresnet_state": system.tabresnet.net.state_dict(),
-        "tabresnet_cfg": system.tabresnet.cfg,
-        "tabresnet_dim": system.tabresnet.net.stem.in_features,
+        "catboost": system.catboost,
         "cvae_state": system.cvae.model.state_dict(),
         "cvae_cfg": system.cvae.cfg,
         "cvae_dim": system.cvae.model.feature_dim,
-        "fusion_weights": (system.fusion_weights.w_xgb, system.fusion_weights.w_tr),
         "graph": system.graph,
         "feature_names": system.feature_names,
+        "fusion_weights": (1.0, 0.0),
     }
     with open(path, "wb") as f:
         pickle.dump(payload, f)
@@ -657,22 +647,19 @@ def load_trained_system(path: str = DEFAULT_CHECKPOINT_PATH) -> Optional[Trained
         with open(path, "rb") as f:
             payload = pickle.load(f)
 
-        tabresnet = TabResNetClassifier(payload["tabresnet_dim"], payload["tabresnet_cfg"])
-        tabresnet.net.load_state_dict(payload["tabresnet_state"])
-
         cvae = CVAETrainer(payload["cvae_dim"], payload["cvae_cfg"])
         cvae.model.load_state_dict(payload["cvae_state"])
 
-        w_xgb, w_tr = payload["fusion_weights"]
-        fusion_weights = FusionWeights(w_xgb=w_xgb, w_tr=w_tr)
+        catboost = payload.get("catboost")
+        if catboost is None and "xgb" in payload:
+            catboost = payload["xgb"]
 
         system = TrainedSystem(
-            xgb=payload["xgb"],
-            tabresnet=tabresnet,
+            catboost=catboost,
             cvae=cvae,
-            fusion_weights=fusion_weights,
             graph=payload["graph"],
             feature_names=payload["feature_names"],
+            fusion_weights=FusionWeights(w_xgb=1.0, w_tr=0.0),
         )
         print(f"Loaded trained system from checkpoint: {path}")
         return system
@@ -897,10 +884,8 @@ def run_full_metrics_evaluation(
     # Adjust config for quick verification if requested
     eval_cfg = copy.deepcopy(CFG)
     if quick:
-        print("Running in fast-eval mode (optimized mini-batch iterations)...")
-        eval_cfg.xgb.n_estimators = 80
-        eval_cfg.tabresnet.epochs = 12
-        eval_cfg.tabresnet.patience = 5
+        print("Running in fast-eval mode (optimized iterations)...")
+        eval_cfg.catboost.iterations = 50
         eval_cfg.cvae.epochs = 10
         eval_cfg.cvae.n_samples_M = 15
         eval_cfg.acquisition.n_candidate_values_K = 3
@@ -914,7 +899,7 @@ def run_full_metrics_evaluation(
         system = load_trained_system(checkpoint_path)
 
     if system is None:
-        print("[Step 2/6] Training full DSS system bundle (XGBoost, TabResNet, CVAE, Graph)...")
+        print("[Step 2/6] Training full DSS system bundle (CatBoost, CVAE, Graph)...")
         system = train_full_system(prepared, cfg=eval_cfg)
         save_trained_system(system, checkpoint_path)
     else:
@@ -931,9 +916,7 @@ def run_full_metrics_evaluation(
     # Step 3: Initial Partially Observed Prediction & Stability
     # -----------------------------------------------------------------------
     print(f"\n[Step 3/6] Evaluating Initial (Partially Observed) state for {n} patients...")
-    p_xgb_0 = system.xgb.predict_proba_y1(X_obs_init, m_test_eval)
-    p_tr_0 = system.tabresnet.predict_proba_y1(X_obs_init, m_test_eval)
-    p_fused_0 = fuse(p_xgb_0, p_tr_0, system.fusion_weights)
+    p_fused_0 = system.catboost.predict_proba_y1(X_obs_init, m_test_eval)
     y_hat_0 = predict_label(p_fused_0)
 
     pred_initial = compute_prediction_metrics(y_test_eval, y_hat_0, p_fused_0)

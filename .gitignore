@@ -42,3 +42,4 @@ evaluation_plots/
 models/*.json
 models/*.ubj
 models/*.pt
+catboost_info/

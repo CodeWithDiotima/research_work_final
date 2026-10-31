@@ -52,8 +52,7 @@ from acquisition import (
     acquire_actual_value,
 )
 # Import individual model wrappers
-from models.xgboost_model import XGBClassifier
-from models.tabresnet import TabResNetClassifier
+from models.catboost_model import CatBoostClassifier
 from models.cvae import CVAETrainer
 
 
@@ -61,19 +60,27 @@ from models.cvae import CVAETrainer
 class TrainedSystem:
     """
     Container packaging all trained models and structures needed at inference time:
-    - xgb: Fitted XGBoost gradient boosted tree classifier
-    - tabresnet: Fitted TabResNet deep residual MLP
+    - catboost: Fitted CatBoost gradient boosted tree classifier (f_CB)
     - cvae: Fitted Conditional Variational Autoencoder missing-value generator
-    - fusion_weights: Optimal ensemble weights (w_XGB, w_TR)
     - graph: Clinical Information Graph capturing feature-feature correlations
     - feature_names: Ordered list of all 21 clinical feature names
+    - fusion_weights: Optional[FusionWeights] (retained for backward compatibility)
     """
-    xgb: XGBClassifier
-    tabresnet: TabResNetClassifier
+    catboost: CatBoostClassifier
     cvae: CVAETrainer
-    fusion_weights: FusionWeights
     graph: ClinicalGraph
     feature_names: List[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
+    fusion_weights: Optional[FusionWeights] = None
+
+    @property
+    def xgb(self):
+        """Backward-compatibility alias."""
+        return self.catboost
+
+    @property
+    def tabresnet(self):
+        """Backward-compatibility alias."""
+        return self.catboost
 
 
 def _candidate_value_sampler(system: TrainedSystem, cfg=CFG.acquisition):
@@ -103,17 +110,14 @@ def build_model_bundle(system: TrainedSystem) -> ModelBundle:
     Packages model inference functions into a clean ModelBundle interface
     expected by the feature acquisition module.
     """
+    predict_fn = lambda X_obs, m: system.catboost.predict_proba_y1(X_obs, m)
     return ModelBundle(
-        # Lambda function to get P(y=1) probability predictions from XGBoost
-        xgb_predict=lambda X_obs, m: system.xgb.predict_proba_y1(X_obs, m),
-        # Lambda function to get P(y=1) probability predictions from TabResNet
-        tr_predict=lambda X_obs, m: system.tabresnet.predict_proba_y1(X_obs, m),
-        # Candidate value generator for Step 18 future DSS estimation
+        classifier_predict=predict_fn,
         sample_candidate_values=_candidate_value_sampler(system),
-        # Generative profile completion function for Step 8 counterfactual evaluation
         sample_plausible=lambda X_obs, m, n: system.cvae.generate_plausible_profiles(X_obs, m, n),
-        # Learned ensemble fusion weights
         fusion_weights=system.fusion_weights,
+        xgb_predict=predict_fn,
+        tr_predict=predict_fn,
     )
 
 
@@ -187,14 +191,10 @@ def run_adaptive_acquisition(
         Xo, mm = X_obs[idx], m[idx]
 
         # -------------------------------------------------------------------
-        # Step 4-6: Current Fused Prediction
+        # Step 4-6: Current Single-Classifier Prediction
         # -------------------------------------------------------------------
-        # Predict risk probability from XGBoost using currently observed features
-        p_xgb = models.xgb_predict(Xo, mm)
-        # Predict risk probability from TabResNet using currently observed features
-        p_tr = models.tr_predict(Xo, mm)
-        # Fuse predictions: p_t = w_XGB * p_XGB + w_TR * p_TR
-        p_t = fuse(p_xgb, p_tr, models.fusion_weights)
+        # Predict risk probability from CatBoost using currently observed features
+        p_t = models.classifier_predict(Xo, mm)
         # Convert continuous probabilities into binary labels: 1 if p_t >= 0.5 else 0
         y_hat_t = predict_label(p_t)
 
@@ -215,9 +215,7 @@ def run_adaptive_acquisition(
         # Evaluate model predictions across each generated plausible completion
         for mi in range(M):
             profile = plausible[mi]
-            pxm = models.xgb_predict(profile, full_mask)
-            ptm = models.tr_predict(profile, full_mask)
-            p_plaus[mi] = fuse(pxm, ptm, models.fusion_weights)
+            p_plaus[mi] = models.classifier_predict(profile, full_mask)
             y_plaus[mi] = predict_label(p_plaus[mi])
 
         # Calculate Classification Stability (CS_t), Predictive Divergence (PD_t), and DSS_t
@@ -308,9 +306,7 @@ def run_adaptive_acquisition(
     still_active = np.where(active)[0]
     if len(still_active) > 0:
         Xo, mm = X_obs[still_active], m[still_active]
-        p_xgb = models.xgb_predict(Xo, mm)
-        p_tr = models.tr_predict(Xo, mm)
-        p_t = fuse(p_xgb, p_tr, models.fusion_weights)
+        p_t = models.classifier_predict(Xo, mm)
         y_hat_t = predict_label(p_t)
         for local_i, global_i in enumerate(still_active):
             final_y_hat[global_i] = y_hat_t[local_i]
@@ -333,63 +329,40 @@ def run_adaptive_acquisition(
 def train_full_system(prepared, cfg=CFG) -> TrainedSystem:
     """
     Orchestrates the entire system training process before running inference:
-    1. Trains XGBoost on partially observed data with masks.
-    2. Trains TabResNet deep neural network on concatenated features and masks.
-    3. Trains CVAE to model the distribution of missing features given observed features.
-    4. Finds optimal Bayesian fusion weights on the validation set.
-    5. Builds the Clinical Information Graph capturing mutual information relationships.
+    1. Trains CatBoost classifier on partially observed data with masks.
+    2. Trains CVAE to model the distribution of missing features given observed features.
+    3. Constructs the Clinical Information Graph capturing mutual information relationships.
     """
     # -----------------------------------------------------------------------
-    # Step 1: Train the XGBoost Classifier (f_XGB)
+    # Step 1: Train the CatBoost Classifier (f_CB)
     # -----------------------------------------------------------------------
-    print("[1/5] Training XGBoost classifier (f_XGB)...")
-    # Masked features: unobserved entries are zeroed out
-    xgb = XGBClassifier(cfg.xgb).fit(
+    print("[1/3] Training CatBoost classifier (f_CB)...")
+    catboost = CatBoostClassifier(cfg.catboost).fit(
         prepared.X_train * prepared.m_train, prepared.m_train, prepared.y_train,
         prepared.X_val * prepared.m_val, prepared.m_val, prepared.y_val,
     )
 
     # -----------------------------------------------------------------------
-    # Step 2: Train the TabResNet Classifier (f_TR)
+    # Step 2: Train the Generative CVAE Model
     # -----------------------------------------------------------------------
-    print("[2/5] Training TabResNet classifier (f_TR)...")
-    # Input dimension is 2 * F: F feature values + F binary mask flags
-    input_dim = prepared.X_train.shape[1] * 2
-    tabresnet = TabResNetClassifier(input_dim, cfg.tabresnet).fit(
-        prepared.X_train * prepared.m_train, prepared.m_train, prepared.y_train,
-        prepared.X_val * prepared.m_val, prepared.m_val, prepared.y_val,
-    )
-
-    # -----------------------------------------------------------------------
-    # Step 3: Train the Generative CVAE Model
-    # -----------------------------------------------------------------------
-    print("[3/5] Training CVAE generative profile completion model...")
+    print("[2/3] Training CVAE generative profile completion model...")
     # CVAE learns P(x_missing | x_observed) to hallucinate plausible missing measurements
     cvae = CVAETrainer(prepared.X_train.shape[1], cfg.cvae).fit(
         prepared.X_train, prepared.m_train
     )
 
     # -----------------------------------------------------------------------
-    # Step 4: Fit Bayesian Ensemble Fusion Weights (w_XGB, w_TR)
+    # Step 3: Construct the Clinical Information Graph G = (V, E, W)
     # -----------------------------------------------------------------------
-    print("[4/5] Fitting Bayesian fusion weights...")
-    # Obtain validation probabilities from both individual classifiers
-    p_xgb_val = xgb.predict_proba_y1(prepared.X_val * prepared.m_val, prepared.m_val)
-    p_tr_val = tabresnet.predict_proba_y1(prepared.X_val * prepared.m_val, prepared.m_val)
-    # Search for weights w_XGB, w_TR that minimize validation log-loss / maximize accuracy
-    fusion_weights = fit_fusion_weights_on_val(p_xgb_val, p_tr_val, prepared.y_val, cfg.fusion)
-    print(f"      Fitted weights: w_XGB={fusion_weights.w_xgb:.3f}, w_TR={fusion_weights.w_tr:.3f}")
-
-    # -----------------------------------------------------------------------
-    # Step 5: Construct the Clinical Information Graph G = (V, E, W)
-    # -----------------------------------------------------------------------
-    print("[5/5] Constructing Clinical Information Graph...")
+    print("[3/3] Constructing Clinical Information Graph...")
     # Nodes V = 21 features; Edges E weighted by mutual information and clinical association
     graph = build_clinical_graph(prepared.X_train, prepared.y_train)
     
     # Return the assembled trained system bundle
     return TrainedSystem(
-        xgb=xgb, tabresnet=tabresnet, cvae=cvae,
-        fusion_weights=fusion_weights, graph=graph,
+        catboost=catboost,
+        cvae=cvae,
+        graph=graph,
+        fusion_weights=FusionWeights(w_xgb=1.0, w_tr=0.0),
     )
 
